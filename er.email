@@ -1,0 +1,128 @@
+[33mcommit 8f3aea54dfc9a509903da3b1626f0934713e0fab[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    enhancing L5 detection
+
+[33mcommit 04cdeff34a92c45ed54d2e5adfeb5e900844ac92[m
+Author: R Naveen Patil <151442218+rnaveenpatil@users.noreply.github.com>
+Commit: GitHub <noreply@github.com>
+
+    Update README.md
+
+[33mcommit 9c3510251e320b51950d94f1b2b7786a142a6db5[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    optimised code
+
+[33mcommit ca7e405f75f3fe7b4b1b4b1c4be87e9a03e90758[m
+Merge: 239be82 5e8fea0
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    i think all moost done
+
+[33mcommit 239be82fbe8b8cf4bbdb7e6bed870c34313d318a[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+     i think all most done
+
+[33mcommit 5e8fea05ad0b04eba2fad0c2be2174a6c8e7ee4b[m
+Author: R Naveen Patil <151442218+rnaveenpatil@users.noreply.github.com>
+Commit: GitHub <noreply@github.com>
+
+    Update README.md
+
+[33mcommit c74ca6a2830f7b1c9c8800b202b22c8d6dbd003d[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+     all most done i think:(
+
+[33mcommit 86d55529dcab6ec68785a51c1d24f345bd42c4cd[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    adding L5 band detectiin in mainActivity
+
+[33mcommit 9c576faf035e2ee325e1c470aa548ddd3e5968af[m
+Author: R Naveen Patil <151442218+rnaveenpatil@users.noreply.github.com>
+Commit: GitHub <noreply@github.com>
+
+    Update README.md
+
+[33mcommit 250832204ccc0b3a1f0063739362994279a870dd[m
+Author: R Naveen Patil <151442218+rnaveenpatil@users.noreply.github.com>
+Commit: GitHub <noreply@github.com>
+
+    Update README.md
+
+[33mcommit e7605d029e77496affbb3d80acd96f72d71d303c[m
+Merge: 8c0da5f c821fb4
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    Merge branch 'main' of github.com:rnaveenpatil/navic
+
+[33mcommit 8c0da5f27ebafab3753c9ca8b1a5ba9b13754308[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    optimised app
+
+[33mcommit c821fb4e121abcc1cce73a8d4bdab1542a71f7c2[m
+Author: R Naveen Patil <151442218+rnaveenpatil@users.noreply.github.com>
+Commit: GitHub <noreply@github.com>
+
+    Update README.md
+
+[33mcommit df5bc9a1178c993d2203097f6a3aa11367ac60bf[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    enhanced ui
+
+[33mcommit 50777eb3bc0dc996cc8772f49649496e74a84a45[m
+Merge: e17cbb8 84c3851
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    Merge branch 'main' of github.com:rnaveenpatil/navic
+
+[33mcommit e17cbb8eb912c2d16af7c0dc1048da650d7ad17b[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+     enhaced ui
+
+[33mcommit 84c385141afcafa07a31b811634fe8a3edd12f8b[m
+Author: R Naveen Patil <151442218+rnaveenpatil@users.noreply.github.com>
+Commit: GitHub <noreply@github.com>
+
+    Update README.md
+
+[33mcommit a69439871bab5a3fb230516b908c9d598c4eebc7[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    Add build to .gitignore
+
+[33mcommit 06cdb3f547e98bb95308831572325fc94073a16c[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    Remove build files and add .gitignore
+
+[33mcommit 1f46f543c08ae5f81c3fb7d6ccda35fdecb150dc[m
+Author: R Naveen Patil <rnaveenpatill@gmail.com>
+Commit: R Naveen Patil <rnaveenpatill@gmail.com>
+
+    hardware detection stage
+
+[33mcommit 701da87c05f1d62c6fce0420c738224e87b10754[m
+Author: R Naveen Patil <151442218+rnaveenpatil@users.noreply.github.com>
+Commit: GitHub <noreply@github.com>
+
+    Create README.md

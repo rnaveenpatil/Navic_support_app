@@ -1,0 +1,333 @@
+// lib/services/hardware_services.dart
+import 'dart:async';
+import 'package:flutter/services.dart';
+
+class NavicDetectionResult {
+  final bool isSupported;
+  final bool isActive;
+  final int satelliteCount;
+  final int totalSatellites;
+  final int usedInFixCount;
+  final String detectionMethod;
+  final double confidenceLevel;
+  final double averageSignalStrength;
+  final String chipsetType;
+  final String chipsetVendor;
+  final String chipsetModel;
+  final bool hasL5Band;
+  final String positioningMethod;
+  final String primarySystem;
+  final Map<String, dynamic> l5BandInfo;
+  final List<dynamic> allSatellites;
+
+  const NavicDetectionResult({
+    required this.isSupported,
+    required this.isActive,
+    required this.satelliteCount,
+    required this.totalSatellites,
+    required this.usedInFixCount,
+    required this.detectionMethod,
+    required this.confidenceLevel,
+    required this.averageSignalStrength,
+    required this.chipsetType,
+    required this.chipsetVendor,
+    required this.chipsetModel,
+    required this.hasL5Band,
+    required this.positioningMethod,
+    required this.primarySystem,
+    required this.l5BandInfo,
+    required this.allSatellites,
+  });
+
+  factory NavicDetectionResult.fromMap(Map<String, dynamic> map) {
+    return NavicDetectionResult(
+      isSupported: map['isSupported'] as bool? ?? false,
+      isActive: map['isActive'] as bool? ?? false,
+      satelliteCount: map['satelliteCount'] as int? ?? 0,
+      totalSatellites: map['totalSatellites'] as int? ?? 0,
+      usedInFixCount: map['usedInFixCount'] as int? ?? 0,
+      detectionMethod: map['detectionMethod'] as String? ?? 'UNKNOWN',
+      confidenceLevel: (map['confidenceLevel'] as num?)?.toDouble() ?? 0.0,
+      averageSignalStrength: (map['averageSignalStrength'] as num?)?.toDouble() ?? 0.0,
+      chipsetType: map['chipsetType'] as String? ?? 'UNKNOWN',
+      chipsetVendor: map['chipsetVendor'] as String? ?? 'UNKNOWN',
+      chipsetModel: map['chipsetModel'] as String? ?? 'UNKNOWN',
+      hasL5Band: map['hasL5Band'] as bool? ?? false,
+      positioningMethod: map['positioningMethod'] as String? ?? 'GPS',
+      primarySystem: map['primarySystem'] as String? ?? 'GPS',
+      l5BandInfo: (map['l5BandInfo'] as Map<String, dynamic>?) ?? {},
+      allSatellites: (map['allSatellites'] as List<dynamic>?) ?? [],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'isSupported': isSupported,
+      'isActive': isActive,
+      'satelliteCount': satelliteCount,
+      'totalSatellites': totalSatellites,
+      'usedInFixCount': usedInFixCount,
+      'detectionMethod': detectionMethod,
+      'confidenceLevel': confidenceLevel,
+      'averageSignalStrength': averageSignalStrength,
+      'chipsetType': chipsetType,
+      'chipsetVendor': chipsetVendor,
+      'chipsetModel': chipsetModel,
+      'hasL5Band': hasL5Band,
+      'positioningMethod': positioningMethod,
+      'primarySystem': primarySystem,
+      'l5BandInfo': l5BandInfo,
+      'allSatellites': allSatellites,
+    };
+  }
+
+  @override
+  String toString() {
+    return 'NavicDetectionResult('
+        'isSupported: $isSupported, '
+        'isActive: $isActive, '
+        'satellites: $satelliteCount/$totalSatellites ($usedInFixCount used), '
+        'method: $detectionMethod, '
+        'confidence: ${(confidenceLevel * 100).toStringAsFixed(1)}%, '
+        'chipset: $chipsetVendor $chipsetModel, '
+        'L5: $hasL5Band, '
+        'primary: $primarySystem)';
+  }
+}
+
+class RealTimeDetectionResult {
+  final bool success;
+  final bool hasL5Band;
+  final String? chipset;
+  final String? message;
+
+  const RealTimeDetectionResult({
+    required this.success,
+    required this.hasL5Band,
+    this.chipset,
+    this.message,
+  });
+}
+
+class PermissionResult {
+  final bool granted;
+  final String message;
+  final Map<String, bool>? permissions;
+
+  const PermissionResult({
+    required this.granted,
+    required this.message,
+    this.permissions,
+  });
+}
+
+class NavicHardwareService {
+  static const MethodChannel _channel = MethodChannel('navic_support');
+  
+  static Function(Map<String, dynamic>)? _permissionResultCallback;
+  static Function(Map<String, dynamic>)? _satelliteUpdateCallback;
+  static Function(Map<String, dynamic>)? _locationUpdateCallback;
+
+  static void initialize() {
+    _channel.setMethodCallHandler(_handleMethodCall);
+  }
+
+  static Future<dynamic> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onPermissionResult':
+        final result = call.arguments as Map<String, dynamic>;
+        _permissionResultCallback?.call(result);
+        break;
+      case 'onSatelliteUpdate':
+        final data = call.arguments as Map<String, dynamic>;
+        _satelliteUpdateCallback?.call(data);
+        break;
+      case 'onLocationUpdate':
+        final data = call.arguments as Map<String, dynamic>;
+        _locationUpdateCallback?.call(data);
+        break;
+      default:
+        print('Unknown method call: ${call.method}');
+    }
+    return null;
+  }
+
+  // CHANGED: This method name should match Java implementation
+  static Future<NavicDetectionResult> checkNavicHardware() async {
+    try {
+      final result = await _channel.invokeMethod('checkNavicHardware');
+      return NavicDetectionResult.fromMap(Map<String, dynamic>.from(result as Map));
+    } on PlatformException catch (e) {
+      print('Error checking NavIC hardware: ${e.message}');
+      return NavicDetectionResult(
+        isSupported: false,
+        isActive: false,
+        satelliteCount: 0,
+        totalSatellites: 0,
+        usedInFixCount: 0,
+        detectionMethod: 'ERROR',
+        confidenceLevel: 0.0,
+        averageSignalStrength: 0.0,
+        chipsetType: 'ERROR',
+        chipsetVendor: 'ERROR',
+        chipsetModel: 'ERROR',
+        hasL5Band: false,
+        positioningMethod: 'ERROR',
+        primarySystem: 'GPS',
+        l5BandInfo: {},
+        allSatellites: [],
+      );
+    }
+  }
+
+  // CHANGED: This method should exist in Java
+  static Future<Map<String, dynamic>> getGnssCapabilities() async {
+    try {
+      final result = await _channel.invokeMethod('getGnssCapabilities');
+      return Map<String, dynamic>.from(result as Map);
+    } on PlatformException catch (e) {
+      print('Error getting GNSS capabilities: ${e.message}');
+      return {};
+    }
+  }
+
+  // REMOVED/COMMENTED OUT: These methods don't exist in Java
+  // static Future<RealTimeDetectionResult> startRealTimeDetection() async {
+  //   // Not implemented in Java
+  //   return RealTimeDetectionResult(
+  //     success: false,
+  //     hasL5Band: false,
+  //     message: 'Method not implemented on Android',
+  //   );
+  // }
+  
+  // static Future<RealTimeDetectionResult> stopRealTimeDetection() async {
+  //   // Not implemented in Java
+  //   return RealTimeDetectionResult(
+  //     success: false,
+  //     hasL5Band: false,
+  //     message: 'Method not implemented on Android',
+  //   );
+  // }
+
+  // CHANGED: Use correct method name that exists in Java
+  static Future<PermissionResult> checkLocationPermissions() async {
+    try {
+      final result = await _channel.invokeMethod('checkLocationPermissions');
+      final Map<String, dynamic> data = Map<String, dynamic>.from(result as Map);
+      return PermissionResult(
+        granted: data['allPermissionsGranted'] as bool? ?? false,
+        message: data['message'] as String? ?? 'Permissions checked',
+        permissions: data.cast<String, bool>(),
+      );
+    } on PlatformException catch (e) {
+      print('Error checking permissions: ${e.message}');
+      return PermissionResult(
+        granted: false,
+        message: e.message ?? 'Permission check failed',
+      );
+    }
+  }
+
+  // CHANGED: Use correct method name that exists in Java
+  static Future<PermissionResult> requestLocationPermissions() async {
+    try {
+      final result = await _channel.invokeMethod('requestLocationPermissions');
+      final Map<String, dynamic> data = Map<String, dynamic>.from(result as Map);
+      return PermissionResult(
+        granted: data['granted'] as bool? ?? false,
+        message: data['message'] as String? ?? 'Permissions requested',
+        permissions: data.cast<String, bool>(),
+      );
+    } on PlatformException catch (e) {
+      print('Error requesting permissions: ${e.message}');
+      return PermissionResult(
+        granted: false,
+        message: e.message ?? 'Permission request failed',
+      );
+    }
+  }
+
+  // REMOVED/COMMENTED OUT: This method doesn't exist in Java
+  // static Future<Map<String, dynamic>> getAllSatellites() async {
+  //   // Not implemented in Java
+  //   return {};
+  // }
+
+  // REMOVED/COMMENTED OUT: This method doesn't exist in Java
+  // static Future<Map<String, dynamic>> getDeviceInfo() async {
+  //   // Not implemented in Java
+  //   return {};
+  // }
+
+  static void setPermissionResultCallback(Function(Map<String, dynamic>) callback) {
+    _permissionResultCallback = callback;
+  }
+
+  static void removePermissionResultCallback() {
+    _permissionResultCallback = null;
+  }
+
+  static void setSatelliteUpdateCallback(Function(Map<String, dynamic>) callback) {
+    _satelliteUpdateCallback = callback;
+  }
+
+  static void removeSatelliteUpdateCallback() {
+    _satelliteUpdateCallback = null;
+  }
+
+  static void setLocationUpdateCallback(Function(Map<String, dynamic>) callback) {
+    _locationUpdateCallback = callback;
+  }
+
+  static void removeLocationUpdateCallback() {
+    _locationUpdateCallback = null;
+  }
+
+  // CHANGED: Use correct method name that exists in Java
+  static Future<bool> startLocationUpdates() async {
+    try {
+      final result = await _channel.invokeMethod('startLocationUpdates');
+      final Map<String, dynamic> data = Map<String, dynamic>.from(result as Map);
+      return data['success'] as bool? ?? false;
+    } on PlatformException catch (e) {
+      print('Error starting location updates: ${e.message}');
+      return false;
+    }
+  }
+
+  // CHANGED: Use correct method name that exists in Java
+  static Future<bool> stopLocationUpdates() async {
+    try {
+      final result = await _channel.invokeMethod('stopLocationUpdates');
+      final Map<String, dynamic> data = Map<String, dynamic>.from(result as Map);
+      return data['success'] as bool? ?? false;
+    } on PlatformException catch (e) {
+      print('Error stopping location updates: ${e.message}');
+      return false;
+    }
+  }
+
+  // CHANGED: Use correct method name that exists in Java
+  static Future<bool> openLocationSettings() async {
+    try {
+      final result = await _channel.invokeMethod('openLocationSettings');
+      final Map<String, dynamic> data = Map<String, dynamic>.from(result as Map);
+      return data['success'] as bool? ?? false;
+    } on PlatformException catch (e) {
+      print('Error opening location settings: ${e.message}');
+      return false;
+    }
+  }
+
+  // CHANGED: Use correct method name that exists in Java
+  static Future<Map<String, dynamic>> isLocationEnabled() async {
+    try {
+      final result = await _channel.invokeMethod('isLocationEnabled');
+      return Map<String, dynamic>.from(result as Map);
+    } on PlatformException catch (e) {
+      print('Error checking location status: ${e.message}');
+      return {};
+    }
+  }
+}
