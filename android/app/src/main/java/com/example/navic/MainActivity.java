@@ -269,50 +269,37 @@ public class MainActivity extends FlutterActivity {
             return;
         }
 
-        // If we already have satellites detected, return them
-        if (!detectedSatellites.isEmpty()) {
+        // If we already have satellites detected and they're recent (within 5 seconds), return them
+        if (!detectedSatellites.isEmpty() && 
+            (System.currentTimeMillis() - getLatestSatelliteTime()) < 5000) {
             returnCurrentSatellites(result);
             return;
         }
         
-        // Start a fresh satellite detection
-        startSatelliteDetectionSession(result, 10000L); // 10 second timeout
+        // Start a fresh satellite detection with proper timeout handling
+        startSatelliteDetection(result, 10000L); // 10 second timeout
     }
 
     /**
-     * Helper method to return current satellites
+     * Get the latest detection time among all satellites
      */
-    private void returnCurrentSatellites(MethodChannel.Result result) {
-        try {
-            List<Map<String, Object>> satellitesInRange = new ArrayList<>();
-
-            for (EnhancedSatellite sat : detectedSatellites.values()) {
-                if (sat.cn0 > 0) { // Only include satellites with signal
-                    satellitesInRange.add(sat.toEnhancedMap());
-                }
+    private long getLatestSatelliteTime() {
+        long latestTime = 0;
+        for (EnhancedSatellite sat : detectedSatellites.values()) {
+            if (sat.detectionTime > latestTime) {
+                latestTime = sat.detectionTime;
             }
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("satellites", satellitesInRange);
-            response.put("count", satellitesInRange.size());
-            response.put("timestamp", System.currentTimeMillis());
-            response.put("hasData", true);
-
-            result.success(response);
-
-        } catch (Exception e) {
-            Log.e("NavIC", "Error returning current satellites", e);
-            result.error("RANGE_ERROR", "Failed to get satellites in range", null);
         }
+        return latestTime;
     }
 
     /**
-     * Start a satellite detection session - FIXED VERSION
+     * Start satellite detection with proper result handling
      */
-    private void startSatelliteDetectionSession(MethodChannel.Result result, long timeoutMs) {
-        Log.d("NavIC", "🛰️ Starting satellite detection session with timeout: " + timeoutMs + "ms");
+    private void startSatelliteDetection(final MethodChannel.Result result, long timeoutMs) {
+        Log.d("NavIC", "🛰️ Starting satellite detection with timeout: " + timeoutMs + "ms");
         
-        // Clear previous data
+        // Clear previous data for fresh detection
         detectedSatellites.clear();
         satellitesBySystem.clear();
         consecutiveNavicDetections.set(0);
@@ -320,6 +307,7 @@ public class MainActivity extends FlutterActivity {
         
         final long startTime = System.currentTimeMillis();
         final GnssStatus.Callback[] detectionCallback = new GnssStatus.Callback[1];
+        final AtomicBoolean resultSent = new AtomicBoolean(false);
         
         detectionCallback[0] = new GnssStatus.Callback() {
             @Override
@@ -341,11 +329,13 @@ public class MainActivity extends FlutterActivity {
                       ", Detected: " + detectedSatellites.size() + 
                       ", Time: " + elapsedTime + "ms");
                 
-                // If we have satellites, return them immediately
-                if (!detectedSatellites.isEmpty() && elapsedTime > 2000) {
-                    // We got satellites, return success
-                    cleanupCallback(detectionCallback[0]);
-                    returnCurrentSatellites(result);
+                // If we have satellites and enough time has passed, return them
+                if (!detectedSatellites.isEmpty() && elapsedTime > 3000) {
+                    // We got satellites, return success (only once)
+                    if (resultSent.compareAndSet(false, true)) {
+                        cleanupCallback(detectionCallback[0]);
+                        returnCurrentSatellites(result);
+                    }
                 }
             }
             
@@ -366,23 +356,19 @@ public class MainActivity extends FlutterActivity {
             
             // Set timeout
             handler.postDelayed(() -> {
-                if (detectionCallback[0] != null) {
+                if (resultSent.compareAndSet(false, true)) {
                     cleanupCallback(detectionCallback[0]);
                     
-                    if (detectedSatellites.isEmpty()) {
-                        // No satellites found
-                        Map<String, Object> response = new HashMap<>();
-                        response.put("satellites", new ArrayList<>());
-                        response.put("count", 0);
-                        response.put("timestamp", System.currentTimeMillis());
-                        response.put("hasData", false);
-                        response.put("message", "No satellites detected within timeout");
-                        response.put("error", "TIMEOUT");
-                        result.success(response);
-                    } else {
-                        // Return what we have
-                        returnCurrentSatellites(result);
-                    }
+                    Map<String, Object> response = new HashMap<>();
+                    response.put("satellites", getSatellitesAsList());
+                    response.put("count", detectedSatellites.size());
+                    response.put("timestamp", System.currentTimeMillis());
+                    response.put("hasData", !detectedSatellites.isEmpty());
+                    response.put("message", detectedSatellites.isEmpty() ? 
+                        "No satellites detected within timeout" : 
+                        "Satellites detected successfully");
+                    
+                    result.success(response);
                 }
             }, timeoutMs);
             
@@ -392,6 +378,34 @@ public class MainActivity extends FlutterActivity {
         } catch (Exception e) {
             Log.e("NavIC", "❌ Failed to register GNSS callback: " + e.getMessage(), e);
             result.error("DETECTION_ERROR", "Failed to start satellite detection: " + e.getMessage(), null);
+        }
+    }
+
+    /**
+     * Helper method to return current satellites
+     */
+    private void returnCurrentSatellites(MethodChannel.Result result) {
+        try {
+            List<Map<String, Object>> satellitesInRange = new ArrayList<>();
+
+            for (EnhancedSatellite sat : detectedSatellites.values()) {
+                if (sat.cn0 > 0) { // Only include satellites with signal
+                    satellitesInRange.add(sat.toEnhancedMap());
+                }
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("satellites", satellitesInRange);
+            response.put("count", satellitesInRange.size());
+            response.put("timestamp", System.currentTimeMillis());
+            response.put("hasData", true);
+            response.put("message", "Satellites detected successfully");
+
+            result.success(response);
+
+        } catch (Exception e) {
+            Log.e("NavIC", "Error returning current satellites", e);
+            result.error("RANGE_ERROR", "Failed to get satellites in range", null);
         }
     }
 
@@ -604,9 +618,10 @@ public class MainActivity extends FlutterActivity {
     /**
      * Start quick satellite detection for statistics
      */
-    private void startQuickSatelliteDetection(MethodChannel.Result originalResult, String purpose) {
+    private void startQuickSatelliteDetection(final MethodChannel.Result originalResult, String purpose) {
         final long startTime = System.currentTimeMillis();
         final GnssStatus.Callback[] quickCallback = new GnssStatus.Callback[1];
+        final AtomicBoolean resultSent = new AtomicBoolean(false);
         
         quickCallback[0] = new GnssStatus.Callback() {
             @Override
@@ -621,19 +636,21 @@ public class MainActivity extends FlutterActivity {
                 updateSatelliteTracking(scanResult);
                 
                 // If we have data or timeout reached, return statistics
-                if (!detectedSatellites.isEmpty() || elapsedTime > 5000) {
-                    cleanupCallback(quickCallback[0]);
-                    
-                    // Call the original method again
-                    switch (purpose) {
-                        case "STATISTICS":
-                            getGnssRangeStatistics(originalResult);
-                            break;
-                        case "DETAILED_INFO":
-                            getDetailedSatelliteInfo(originalResult);
-                            break;
-                        default:
-                            getAllSatellitesInRange(originalResult);
+                if (!detectedSatellites.isEmpty() && elapsedTime > 2000) {
+                    if (resultSent.compareAndSet(false, true)) {
+                        cleanupCallback(quickCallback[0]);
+                        
+                        // Call the original method again
+                        switch (purpose) {
+                            case "STATISTICS":
+                                getGnssRangeStatistics(originalResult);
+                                break;
+                            case "DETAILED_INFO":
+                                getDetailedSatelliteInfo(originalResult);
+                                break;
+                            default:
+                                getAllSatellitesInRange(originalResult);
+                        }
                     }
                 }
             }
@@ -654,23 +671,25 @@ public class MainActivity extends FlutterActivity {
             
             // Timeout after 5 seconds
             handler.postDelayed(() -> {
-                cleanupCallback(quickCallback[0]);
-                
-                if (detectedSatellites.isEmpty()) {
-                    Map<String, Object> error = new HashMap<>();
-                    error.put("error", "NO_SATELLITES_DETECTED");
-                    error.put("message", "No satellites detected within timeout");
-                    originalResult.success(error);
-                } else {
-                    switch (purpose) {
-                        case "STATISTICS":
-                            getGnssRangeStatistics(originalResult);
-                            break;
-                        case "DETAILED_INFO":
-                            getDetailedSatelliteInfo(originalResult);
-                            break;
-                        default:
-                            getAllSatellitesInRange(originalResult);
+                if (resultSent.compareAndSet(false, true)) {
+                    cleanupCallback(quickCallback[0]);
+                    
+                    if (detectedSatellites.isEmpty()) {
+                        Map<String, Object> error = new HashMap<>();
+                        error.put("error", "NO_SATELLITES_DETECTED");
+                        error.put("message", "No satellites detected within timeout");
+                        originalResult.success(error);
+                    } else {
+                        switch (purpose) {
+                            case "STATISTICS":
+                                getGnssRangeStatistics(originalResult);
+                                break;
+                            case "DETAILED_INFO":
+                                getDetailedSatelliteInfo(originalResult);
+                                break;
+                            default:
+                                getAllSatellitesInRange(originalResult);
+                        }
                     }
                 }
             }, 5000);

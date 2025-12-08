@@ -3,8 +3,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:navic_ss/services/location_service.dart';
 import 'package:navic_ss/screens/emergency.dart';
+import 'package:navic_ss/models/satellite_data_model.dart';
+import 'package:navic_ss/models/gnss_satellite.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,7 +20,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final ScrollController _scrollController = ScrollController();
 
   EnhancedPosition? _currentPosition;
-  String _locationQuality = "Acquiring Location...";
+  String _locationQuality = " Location...";
   String _locationSource = "GPS";
   bool _isLoading = true;
   bool _isHardwareChecked = false;
@@ -45,13 +46,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String _positioningMethod = "GPS";
   String _primarySystem = "GPS";
   Map<String, dynamic> _l5BandInfo = {};
-  List<dynamic> _allSatellites = [];
-  List<dynamic> _visibleSystems = [];
-  List<dynamic> _satelliteDetails = [];
+  List<GnssSatellite> _allSatellites = [];
+  List<GnssSatellite> _visibleSystems = [];
+  List<GnssSatellite> _satelliteDetails = [];
   Map<String, dynamic> _systemStats = {};
-  
-  List<Map<String, dynamic>> _visibleSatellites = [];
-  Map<String, dynamic> _satelliteSystemStats = {};
 
   Map<String, bool> _selectedLayers = {
     'OpenStreetMap Standard': true,
@@ -113,32 +111,30 @@ class _HomeScreenState extends State<HomeScreen> {
         return false;
       }
 
-      PermissionStatus permissionStatus = await Permission.location.status;
+      LocationPermission permission = await Geolocator.checkPermission();
+      
+      print("📍 Current permission status: $permission");
 
-      if (permissionStatus.isDenied) {
-        permissionStatus = await Permission.location.request();
+      if (permission == LocationPermission.denied) {
+        print("📍 Permission denied, requesting...");
+        permission = await Geolocator.requestPermission();
         
-        if (permissionStatus.isDenied) {
-          print("❌ Location permission denied");
+        if (permission != LocationPermission.whileInUse && 
+            permission != LocationPermission.always) {
+          print("❌ Location permission not granted: $permission");
           return false;
         }
       }
 
-      if (permissionStatus.isPermanentlyDenied) {
+      if (permission == LocationPermission.deniedForever) {
         print("❌ Location permission permanently denied");
         await _showOpenSettingsDialog();
         return false;
       }
 
-      if (await Permission.locationAlways.isDenied) {
-        final backgroundStatus = await Permission.locationAlways.request();
-        if (backgroundStatus.isDenied) {
-          print("⚠️ Background location permission not granted");
-        }
-      }
-
-      print("📍 Permission status: $permissionStatus");
-      return permissionStatus.isGranted || permissionStatus.isLimited;
+      print("✅ Location permission granted: $permission");
+      return permission == LocationPermission.whileInUse || 
+             permission == LocationPermission.always;
     } catch (e) {
       print("Permission error: $e");
       return false;
@@ -196,7 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
             TextButton(
               child: const Text('Open Settings'),
               onPressed: () {
-                openAppSettings();
+                Geolocator.openAppSettings();
                 Navigator.of(context).pop();
               },
             ),
@@ -228,7 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
               TextButton(
                 child: const Text('Open Settings'),
                 onPressed: () {
-                  openAppSettings();
+                  Geolocator.openAppSettings();
                   Navigator.of(context).pop();
                 },
               ),
@@ -241,7 +237,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _checkNavicHardwareSupport() async {
     try {
-      final serviceStats = _locationService.getServiceStats();
+      final serviceStats = await _locationService.getServiceStats();
 
       setState(() {
         _isNavicSupported = serviceStats['navicSupported'] as bool? ?? false;
@@ -260,71 +256,33 @@ class _HomeScreenState extends State<HomeScreen> {
         _positioningMethod = serviceStats['positioningMethod'] as String? ?? "GPS";
         _primarySystem = serviceStats['primarySystem'] as String? ?? "GPS";
         _l5BandInfo = serviceStats['l5BandInfo'] as Map<String, dynamic>? ?? {};
-        _visibleSystems = (serviceStats['visibleSystems'] as List<dynamic>?) ?? [];
-        _satelliteDetails = _locationService.satelliteDetails;
-        _systemStats = _locationService.systemStats;
+        
         _allSatellites = _locationService.allSatellites;
+        _satelliteDetails = _locationService.satelliteDetails;
+        _visibleSystems = _locationService.visibleSystems;
+        _systemStats = _locationService.systemStats;
 
         _updateHardwareMessage();
         _isHardwareChecked = true;
-        
-        _processSatelliteData();
       });
 
     } catch (e) {
+      print("❌ Error checking NavIC hardware support: $e");
       _setHardwareErrorState();
     }
   }
 
-  void _processSatelliteData() {
-    final List<Map<String, dynamic>> satellites = [];
-    
-    for (final sat in _satelliteDetails) {
-      if (sat is Map<String, dynamic>) {
-        final system = sat['system'] as String? ?? 'UNKNOWN';
-        final svid = sat['svid'] as int? ?? 0;
-        final cn0 = (sat['cn0DbHz'] as num?)?.toDouble() ?? 0.0;
-        final used = sat['usedInFix'] as bool? ?? false;
-        final elevation = (sat['elevation'] as num?)?.toDouble() ?? 0.0;
-        final azimuth = (sat['azimuth'] as num?)?.toDouble() ?? 0.0;
-        final hasEphemeris = sat['hasEphemeris'] as bool? ?? false;
-        final hasAlmanac = sat['hasAlmanac'] as bool? ?? false;
-        final carrierFrequency = (sat['carrierFrequencyHz'] as num?)?.toDouble();
-        final signalStrength = sat['signalStrength'] as String? ?? 'UNKNOWN';
-        
-        satellites.add({
-          'system': system,
-          'svid': svid,
-          'cn0DbHz': cn0,
-          'usedInFix': used,
-          'elevation': elevation,
-          'azimuth': azimuth,
-          'hasEphemeris': hasEphemeris,
-          'hasAlmanac': hasAlmanac,
-          'carrierFrequencyHz': carrierFrequency,
-          'signalStrength': signalStrength,
-        });
-      }
-    }
-    
-    setState(() {
-      _visibleSatellites = satellites;
-      _satelliteSystemStats = _systemStats;
-    });
-  }
-
   Future<void> _updateSatelliteData() async {
     try {
-      final serviceStats = _locationService.getServiceStats();
-      final satellites = _locationService.satelliteDetails;
-      final systems = _locationService.visibleSystems;
-      final systemStats = _locationService.systemStats;
+      await _locationService.updateSatelliteData();
+      
+      final serviceStats = await _locationService.getServiceStats();
 
       setState(() {
         _allSatellites = _locationService.allSatellites;
-        _satelliteDetails = satellites;
-        _visibleSystems = systems;
-        _systemStats = systemStats;
+        _satelliteDetails = _locationService.satelliteDetails;
+        _visibleSystems = _locationService.visibleSystems;
+        _systemStats = _locationService.systemStats;
         _navicSatelliteCount = serviceStats['navicSatellites'] as int? ?? 0;
         _totalSatelliteCount = serviceStats['totalSatellites'] as int? ?? 0;
         _navicUsedInFix = serviceStats['navicUsedInFix'] as int? ?? 0;
@@ -332,21 +290,21 @@ class _HomeScreenState extends State<HomeScreen> {
         _l5Confidence = (serviceStats['l5Confidence'] as num?)?.toDouble() ?? 0.0;
         _positioningMethod = serviceStats['positioningMethod'] as String? ?? "GPS";
         _primarySystem = serviceStats['primarySystem'] as String? ?? "GPS";
-        
-        _processSatelliteData();
       });
+      
+      print("✅ Satellite data updated: $_totalSatelliteCount total, $_navicSatelliteCount NavIC ($_navicUsedInFix in fix)");
     } catch (e) {
-      print("Error updating satellite data: $e");
+      print("❌ Error updating satellite data: $e");
     }
   }
 
   void _updateHardwareMessage() {
     if (!_isNavicSupported && !_hasL5Band) {
-      _hardwareMessage = "Chipset does not support NavIC and no L5 band";
+      _hardwareMessage = "Chipset does  support NavIC and no L5 band   so using gps for navigation";
       _hardwareStatus = "Limited Hardware";
     } else if (_isNavicSupported && !_hasL5Band) {
-      _hardwareMessage = "Device supports NavIC but no L5 band";
-      _hardwareStatus = "NavIC Ready";
+      _hardwareMessage = "Device supports NavIC but no L5 band  so using gps for navigation";
+      _hardwareStatus = "NavIC Ready chiset but no L5 band";
     } else if (_isNavicSupported && _hasL5Band) {
       _hardwareMessage = "Device supports NavIC with L5 band";
       _hardwareStatus = "NavIC with L5";
@@ -387,8 +345,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _visibleSystems = [];
       _satelliteDetails = [];
       _systemStats = {};
-      _visibleSatellites = [];
-      _satelliteSystemStats = {};
     });
   }
 
@@ -405,13 +361,11 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         print("❌ Location service returned null or invalid coordinates");
         
-        // Try fallback method
         await _tryFallbackLocationAcquisition();
       }
     } catch (e) {
       print("❌ Error acquiring location: $e");
       
-      // Show error to user
       if (!mounted) return;
       
       ScaffoldMessenger.of(context).showSnackBar(
@@ -427,17 +381,23 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       print("🔄 Trying fallback location acquisition...");
       
-      // Check permission again
-      final hasPermission = await _checkAndRequestPermission();
-      if (!hasPermission) {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print("❌ Location services are disabled");
+        return;
+      }
+      
+      LocationPermission permission = await Geolocator.checkPermission();
+      
+      if (permission != LocationPermission.whileInUse && 
+          permission != LocationPermission.always) {
         print("❌ No location permission for fallback");
         return;
       }
       
-      // Try with lower accuracy if high accuracy fails
       print("📍 Trying with lower accuracy...");
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        desiredAccuracy: LocationAccuracy.medium,
         timeLimit: const Duration(seconds: 10),
       );
       
@@ -460,12 +420,17 @@ class _HomeScreenState extends State<HomeScreen> {
           navicUsedInFix: 0,
           hasL5Band: false,
           positioningMethod: "GPS_FALLBACK",
+          satelliteInfo: [],
+          systemStats: {},
           primarySystem: "GPS",
           chipsetType: "Unknown",
           chipsetVendor: "Unknown",
           chipsetModel: "Unknown",
           chipsetConfidence: 0.0,
           l5Confidence: 0.0,
+          verificationMethods: [],
+          acquisitionTimeMs: 0.0,
+          satelliteDetails: [],
         );
         
         _updateLocationState(enhancedPosition);
@@ -474,7 +439,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Using fallback GPS positioning"),
+            content: Text("Navic is unavelable using GPS for positioning"),
             backgroundColor: Colors.orange,
           ),
         );
@@ -501,9 +466,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _lastValidMapCenter = LatLng(position.latitude, position.longitude);
 
       if (position.satelliteInfo.isNotEmpty) {
-        _navicSatelliteCount = position.navicSatellites ?? 0;
-        _totalSatelliteCount = position.totalSatellites ?? 0;
-        _navicUsedInFix = position.navicUsedInFix ?? 0;
+        final satelliteInfo = position.satelliteInfo.first;
+        _navicSatelliteCount = position.navicSatellites;
+        _totalSatelliteCount = position.totalSatellites;
+        _navicUsedInFix = position.navicUsedInFix;
         _hasL5Band = position.hasL5Band;
         _l5Confidence = position.l5Confidence;
         _positioningMethod = position.positioningMethod;
@@ -513,7 +479,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _chipsetModel = position.chipsetModel;
         _chipsetConfidence = position.chipsetConfidence;
         
-        _processSatelliteData();
+        _allSatellites = _locationService.allSatellites;
+        _satelliteDetails = _locationService.satelliteDetails;
+        _systemStats = _locationService.systemStats;
       }
     });
   }
@@ -526,8 +494,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _logLocationDetails(EnhancedPosition position) {
-    print("📍 Map centered at: ${position.latitude}, ${position.longitude}");
-    print("🎯 Accuracy: ${position.accuracy.toStringAsFixed(2)} meters");
+    print("\n📍 === LOCATION DETAILS ===");
+    print("📍 Coordinates: ${position.latitude}, ${position.longitude}");
+    print("🎯 Accuracy: ${position.accuracy?.toStringAsFixed(2)} meters");
     print("🛰️ Source: $_locationSource");
     print("🎯 Primary System: $_primarySystem");
     print("💪 Confidence: ${(position.confidenceScore * 100).toStringAsFixed(1)}%");
@@ -539,14 +508,18 @@ class _HomeScreenState extends State<HomeScreen> {
     print("📶 L5 Band: ${_hasL5Band ? 'Available' : 'Not Available'}");
     print("🔍 L5 Confidence: ${(_l5Confidence * 100).toStringAsFixed(1)}%");
     print("🎯 Positioning Method: $_positioningMethod");
+    print("🛰️ Total Satellites: $_totalSatelliteCount");
+    print("📊 Visible Satellites: ${_satelliteDetails.length}");
+    print("===========================\n");
   }
 
   Future<void> _startRealTimeMonitoring() async {
     try {
       await _locationService.startRealTimeMonitoring();
       await _updateSatelliteData();
+      print("✅ Real-time monitoring started");
     } catch (e) {
-      print("Real-time monitoring failed: $e");
+      print("❌ Real-time monitoring failed: $e");
     }
   }
 
@@ -558,19 +531,19 @@ class _HomeScreenState extends State<HomeScreen> {
     final isUsingNavic = _isNavicSupported && _isNavicActive;
     final isUsingL5 = _hasL5Band;
 
-    if (pos.accuracy < 1.0) {
+    if (pos.accuracy != null && pos.accuracy! < 1.0) {
       _locationQuality = isUsingNavic ? 
         (isUsingL5 ? "NavIC+L5 Excellent" : "NavIC Excellent") : 
         (isUsingL5 ? "L5 Excellent" : "Excellent");
-    } else if (pos.accuracy < 2.0) {
+    } else if (pos.accuracy != null && pos.accuracy! < 2.0) {
       _locationQuality = isUsingNavic ? 
         (isUsingL5 ? "NavIC+L5 High" : "NavIC High") : 
         (isUsingL5 ? "L5 High" : "High");
-    } else if (pos.accuracy < 5.0) {
+    } else if (pos.accuracy != null && pos.accuracy! < 5.0) {
       _locationQuality = isUsingNavic ? 
         (isUsingL5 ? "NavIC+L5 Good" : "NavIC Good") : 
         (isUsingL5 ? "L5 Good" : "Good");
-    } else if (pos.accuracy < 10.0) {
+    } else if (pos.accuracy != null && pos.accuracy! < 10.0) {
       _locationQuality = isUsingNavic ? 
         (isUsingL5 ? "NavIC+L5 Basic" : "NavIC Basic") : 
         (isUsingL5 ? "L5 Basic" : "Basic");
@@ -620,7 +593,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (_lastValidMapCenter != null) {
       return _lastValidMapCenter!;
     } else {
-      return const LatLng(28.6139, 77.2090);
+      return const LatLng(28.6139, 77.2090); // Default to New Delhi
     }
   }
 
@@ -793,7 +766,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 children: [
                   Text(
-                    "${_visibleSatellites.length} sats",
+                    "${_satelliteDetails.length} sats",
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: Colors.grey.shade600,
@@ -814,15 +787,15 @@ class _HomeScreenState extends State<HomeScreen> {
           
           const SizedBox(height: 12),
           
-          if (_visibleSatellites.isNotEmpty)
+          if (_satelliteDetails.isNotEmpty)
             SizedBox(
               height: 300,
               child: ListView.builder(
                 shrinkWrap: true,
                 physics: const BouncingScrollPhysics(),
-                itemCount: _visibleSatellites.length,
+                itemCount: _satelliteDetails.length,
                 itemBuilder: (context, index) {
-                  final sat = _visibleSatellites[index];
+                  final sat = _satelliteDetails[index];
                   return _buildSatelliteListItem(sat);
                 },
               ),
@@ -839,19 +812,27 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildSatelliteListItem(Map<String, dynamic> satellite) {
-    final system = satellite['system'] ?? 'UNKNOWN';
-    final svid = satellite['svid'] ?? 0;
-    final cn0 = (satellite['cn0DbHz'] as num?)?.toDouble() ?? 0.0;
-    final used = satellite['usedInFix'] as bool? ?? false;
-    final elevation = (satellite['elevation'] as num?)?.toDouble() ?? 0.0;
-    final azimuth = (satellite['azimuth'] as num?)?.toDouble() ?? 0.0;
-    final carrierFrequency = (satellite['carrierFrequencyHz'] as num?)?.toDouble();
-    final signalStrength = satellite['signalStrength'] ?? 'UNKNOWN';
-    
+  Widget _buildSatelliteListItem(GnssSatellite satellite) {
+    final system = satellite.system;
+    final svid = satellite.svid;
+    final cn0 = satellite.cn0DbHz ?? 0.0;
+    final used = satellite.usedInFix ?? false;
+
+    // Using correct property names for elevation and azimuth
+    final elevation = satellite.elevation ?? 0.0;
+    final azimuth = satellite.azimuth ?? 0.0;
+
+    final carrierFrequency = satellite.carrierFrequencyHz;
+    final signalStrength = _getSignalStrengthString(cn0);
+
     final systemColor = _getSystemColor(system);
     final signalColor = _getSignalColor(cn0);
-    
+
+    // Get country flag and system info
+    final countryFlag = _getCountryFlag(system);
+    final systemFullName = _getSystemFullName(system);
+    final systemCountry = _getSystemCountry(system);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
@@ -862,6 +843,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Row(
         children: [
+          // Country flag and system abbreviation container
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -871,8 +853,16 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Country flag emoji
                 Text(
-                  system,
+                  countryFlag,
+                  style: const TextStyle(
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _getConstellationAbbreviation(system),
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.bold,
@@ -882,17 +872,18 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-          
+
           const SizedBox(width: 12),
-          
+
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // First row: PRN, Signal Strength, In Fix indicator
                 Row(
                   children: [
                     Text(
-                      "SVID-$svid",
+                      "PRN-$svid",
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
@@ -936,9 +927,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                   ],
                 ),
-                
+
                 const SizedBox(height: 6),
-                
+
+                // Second row: Signal strength value
                 Row(
                   children: [
                     Icon(Icons.signal_cellular_alt, size: 14, color: signalColor),
@@ -953,9 +945,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-                
+
                 const SizedBox(height: 4),
-                
+
+                // Third row: Elevation, Azimuth, Frequency
                 Row(
                   children: [
                     Icon(Icons.vertical_align_top, size: 14, color: Colors.orange.shade600),
@@ -977,12 +970,42 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: Colors.purple.shade600,
                       ),
                     ),
+
+                    // Add frequency band indicator if available
+                    if (carrierFrequency != null && carrierFrequency > 0)
+                      Row(
+                        children: [
+                          const SizedBox(width: 12),
+                          Icon(Icons.waves, size: 14, color: Colors.blue.shade600),
+                          const SizedBox(width: 4),
+                          Text(
+                            "${(carrierFrequency / 1e6).toStringAsFixed(1)} MHz",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.blue.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
+                ),
+
+                // Fourth row: System full name and country
+                const SizedBox(height: 4),
+                Text(
+                  "$systemFullName • $systemCountry",
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey.shade600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          
+
+          // In Fix check indicator
           Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
@@ -998,6 +1021,98 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  String _getSignalStrengthString(double cn0) {
+    if (cn0 >= 35) return "EXCELLENT";
+    if (cn0 >= 25) return "STRONG";
+    if (cn0 >= 18) return "GOOD";
+    if (cn0 >= 10) return "WEAK";
+    return "VERY WEAK";
+  }
+
+  String _getConstellationAbbreviation(String system) {
+    switch (system.toUpperCase()) {
+      case 'IRNSS':
+      case 'NAVIC': return 'IRN';
+      case 'GPS': return 'GPS';
+      case 'GLONASS': return 'GLO';
+      case 'GALILEO': return 'GAL';
+      case 'BEIDOU': return 'BDS';
+      case 'QZSS': return 'QZS';
+      case 'SBAS': return 'SBS';
+      default: return system.length > 3 ? system.substring(0, 3) : system;
+    }
+  }
+
+// Add these new helper methods for country flags and system info:
+  String _getCountryFlag(String system) {
+    switch (system.toUpperCase()) {
+      case 'IRNSS':
+      case 'NAVIC':
+        return '🇮🇳'; // India
+      case 'GPS':
+        return '🇺🇸'; // United States
+      case 'GLONASS':
+        return '🇷🇺'; // Russia
+      case 'GALILEO':
+        return '🇪🇺'; // European Union
+      case 'BEIDOU':
+      case 'BDS':
+        return '🇨🇳'; // China
+      case 'QZSS':
+        return '🇯🇵'; // Japan
+      case 'SBAS':
+        return '🌐'; // Global/regional
+      default:
+        return '🛰️'; // Satellite emoji for unknown
+    }
+  }
+
+  String _getSystemFullName(String system) {
+    switch (system.toUpperCase()) {
+      case 'IRNSS':
+      case 'NAVIC':
+        return 'Indian Regional Navigation Satellite System';
+      case 'GPS':
+        return 'Global Positioning System';
+      case 'GLONASS':
+        return 'Global Navigation Satellite System';
+      case 'GALILEO':
+        return 'Galileo Satellite Navigation';
+      case 'BEIDOU':
+      case 'BDS':
+        return 'BeiDou Navigation Satellite System';
+      case 'QZSS':
+        return 'Quasi-Zenith Satellite System';
+      case 'SBAS':
+        return 'Satellite Based Augmentation System';
+      default:
+        return system;
+    }
+  }
+
+  String _getSystemCountry(String system) {
+    switch (system.toUpperCase()) {
+      case 'IRNSS':
+      case 'NAVIC':
+        return 'India';
+      case 'GPS':
+        return 'United States';
+      case 'GLONASS':
+        return 'Russia';
+      case 'GALILEO':
+        return 'European Union';
+      case 'BEIDOU':
+      case 'BDS':
+        return 'China';
+      case 'QZSS':
+        return 'Japan';
+      case 'SBAS':
+        return 'Multiple Countries';
+      default:
+        return 'International';
+    }
   }
 
   Widget _buildNoSatellitesView() {
@@ -1035,7 +1150,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildPrimarySystemInfo() {
     Color primaryColor = _getSystemColor(_primarySystem);
-    bool isNavicPrimary = _primarySystem.contains("NAVIC");
+    bool isNavicPrimary = _primarySystem.contains("NAVIC") || _primarySystem.contains("IRNSS");
     
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1155,14 +1270,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Color _getSystemColor(String system) {
     switch (system.toUpperCase()) {
-      case 'IRNSS': return Colors.green;
-      case 'GPS': return Colors.blue;
-      case 'GLONASS': return Colors.red;
-      case 'GALILEO': return Colors.purple;
-      case 'BEIDOU': return Colors.orange;
-      case 'QZSS': return Colors.pink;
-      case 'SBAS': return Colors.teal;
-      default: return Colors.grey;
+      case 'IRNSS':
+      case 'NAVIC':
+        return Colors.green;
+      case 'GPS':
+        return Colors.blue;
+      case 'GLONASS':
+        return Colors.red;
+      case 'GALILEO':
+        return Colors.purple;
+      case 'BEIDOU':
+        return Colors.orange;
+      case 'QZSS':
+        return Colors.pink;
+      case 'SBAS':
+        return Colors.teal;
+      default:
+        return Colors.grey;
     }
   }
 
@@ -1441,7 +1565,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            "Acquiring Location",
+            "getting  Location",
             style: TextStyle(
               color: Colors.grey.shade600,
               fontSize: 18,
@@ -1501,10 +1625,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 Row(
                   children: [
                     Text(
-                      isNavic ? "NAVIC POSITIONING" : "GPS POSITIONING",
+                      isNavic ? "NAVIC POSITIONING" : "navic is unavalable using gps for positioning",
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
-                        fontSize: 14,
+                        fontSize: 10,
                         color: isNavic ? Colors.green.shade800 : Colors.blue.shade800,
                       ),
                     ),
@@ -1635,7 +1759,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: _buildInfoCard(
                 icon: Icons.location_on_sharp,
                 title: "ACCURACY",
-                value: "${pos.accuracy.toStringAsFixed(1)} meters",
+                value: "${pos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters",
                 color: Colors.orange.shade50,
                 iconColor: Colors.orange.shade700,
               ),
@@ -1716,7 +1840,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(Icons.satellite, color: Colors.purple.shade600, size: 18),
                   const SizedBox(width: 8),
                   Text(
-                    "SATELLITE SUMMARY",
+                    "GNSS range ",
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -1725,23 +1849,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
-              IconButton(
-                icon: const Icon(Icons.list, size: 20),
-                onPressed: _toggleSatelliteList,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
+
             ],
           ),
           const SizedBox(height: 12),
 
           Row(
             children: [
-              _buildSatelliteStat("Total", "$_totalSatelliteCount", Colors.blue),
+              _buildSatelliteStat("Total satellite avelable in range ", "$_totalSatelliteCount", Colors.blue),
               const SizedBox(width: 12),
               _buildSatelliteStat("NavIC", "$_navicSatelliteCount", Colors.green),
               const SizedBox(width: 12),
-              _buildSatelliteStat("In Fix", "$_navicUsedInFix", Colors.orange),
+              //_buildSatelliteStat("In Fix", "$_navicUsedInFix", Colors.orange),
             ],
           ),
         ],
@@ -1806,7 +1925,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildSatelliteStat(String label, String value, Color color) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.only(left: 30,right: 30),
         decoration: BoxDecoration(
           color: color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(8),
