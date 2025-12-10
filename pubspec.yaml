@@ -6,35 +6,41 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ">=2.19.0 <3.0.0"  # Older Dart SDK for V1 compatibility
+  sdk: ">=2.19.0 <3.0.0"   
   flutter: ">=2.5.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # =========== COMPATIBLE OLDER VERSIONS FOR V1 EMBEDDING ===========
-  # Maps integration - compatible versions
-  flutter_map: ^5.0.0  # This requires latlong2 ^0.9.0
-  latlong2: ^0.9.0     # Match flutter_map requirement
 
-  # Geolocation - older compatible version
-  geolocator: ^9.0.2   # Compatible with V1 embedding
+  flutter_map: ^5.0.0
+  latlong2: ^0.9.0
 
-  # URL launching and sharing
+  geolocator: ^9.0.2
+
   url_launcher: ^6.1.0
   share_plus: ^7.0.1
-  # for permission handling
   permission_handler: ^11.0.2
 
-  # UI
+  #for animation
+  video_player: ^2.8.3
+
   cupertino_icons: ^1.0.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: "^0.14.4"
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/logo.png"   # MUST include actual file name!
 
 flutter:
   uses-material-design: true
+
   assets:
-   # - assets/
+    - assets/navic_animetion.mp4
+    - assets/emergency.mp4

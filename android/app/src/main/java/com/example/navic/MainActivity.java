@@ -57,6 +57,12 @@ public class MainActivity extends FlutterActivity {
         put("QZSS", new Double[]{1575.42, 1227.60, 1176.45}); // L1, L2, L5
     }};
 
+    // L5 frequency constants
+    private static final double L5_FREQUENCY_HZ = 1176.45e6; // 1176.45 MHz
+    private static final double L5_FREQUENCY_TOLERANCE = 2.0e6; // ±2 MHz tolerance
+    private static final double L1_FREQUENCY_HZ = 1575.42e6;
+    private static final double L2_FREQUENCY_HZ = 1227.60e6;
+
     // Enhanced country flags for GNSS systems
     private static final Map<String, String> GNSS_COUNTRIES = new HashMap<String, String>() {{
         put("GPS", "🇺🇸");
@@ -92,6 +98,14 @@ public class MainActivity extends FlutterActivity {
             "sa8775p", "sa8295p", "sa8155p", "qcx216", "qcs6490", "qcs6490 5g"
     ));
 
+    // Qualcomm chipsets with confirmed L5 support
+    private static final Set<String> QUALCOMM_L5_CHIPSETS = new HashSet<>(Arrays.asList(
+            "sm8650", "8 gen 3", "sm8550", "8 gen 2", "sm8475", "8+ gen 1",
+            "sm8450", "8 gen 1", "sm8350", "888", "sm8350", "888+",
+            "sm8250", "865", "sm8250-ac", "870", "sm7350", "7+ gen 2",
+            "sm6375", "695", "sm6375", "695 5g", "qcs6490", "qcs6490 5g"
+    ));
+
     // Enhanced MediaTek chipsets with NavIC + L5 support
     private static final Set<String> MEDIATEK_NAVIC_CHIPSETS = new HashSet<>(Arrays.asList(
             // Dimensity 9000 Series
@@ -110,10 +124,22 @@ public class MainActivity extends FlutterActivity {
             "mt6873", "1000l", "mt6853", "800u", "mt6853", "720", "mt6853", "700"
     ));
 
+    // MediaTek chipsets with confirmed L5 support
+    private static final Set<String> MEDIATEK_L5_CHIPSETS = new HashSet<>(Arrays.asList(
+            "mt6989", "9300+", "mt6989", "9300", "mt6985", "9200+", "mt6985", "9200",
+            "mt6983", "9000+", "mt6983", "9000", "mt6897", "8300", "mt6896", "8200",
+            "mt6895", "8100", "mt6889", "7200", "mt6885", "7050", "mt6883", "7030"
+    ));
+
     // Enhanced Samsung Exynos chipsets
     private static final Set<String> SAMSUNG_NAVIC_CHIPSETS = new HashSet<>(Arrays.asList(
             "s5e9945", "2400", "s5e9845", "2200", "s5e9825", "2100", "s5e9820", "2100",
             "s5e8835", "1380", "s5e8825", "1280", "s5e8500", "1330", "s5e9815", "1080"
+    ));
+
+    // Samsung chipsets with L5 support
+    private static final Set<String> SAMSUNG_L5_CHIPSETS = new HashSet<>(Arrays.asList(
+            "s5e9945", "2400", "s5e9845", "2200", "s5e9825", "2100"
     ));
 
     // Enhanced Unisoc chipsets with NavIC
@@ -135,6 +161,7 @@ public class MainActivity extends FlutterActivity {
     private final AtomicInteger consecutiveNavicDetections = new AtomicInteger(0);
     private final AtomicBoolean navicDetectionCompleted = new AtomicBoolean(false);
     private boolean hasL5BandSupport = false;
+    private boolean hasL5BandActive = false; // L5 actually being used
     private String detectedChipset = "UNKNOWN";
     private String chipsetVendor = "UNKNOWN";
     private double chipsetConfidence = 0.0;
@@ -754,10 +781,6 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
-    // =============== ALL OTHER METHODS REMAIN UNCHANGED ===============
-    // Only satellite detection related methods have been modified
-    // All other methods remain exactly as they were
-
     // =============== ENHANCED PERMISSION METHODS ===============
     private void checkLocationPermissions(MethodChannel.Result result) {
         try {
@@ -880,8 +903,8 @@ public class MainActivity extends FlutterActivity {
             // Step 1: ENHANCED Chipset detection with detailed analysis
             EnhancedHardwareDetectionResult hardwareResult = detectEnhancedNavicHardware();
 
-            // Step 2: ADVANCED L5 Band Detection with multiple verification methods
-            EnhancedL5BandResult l5Result = detectEnhancedL5BandSupport();
+            // Step 2: COMPREHENSIVE L5 Band Detection with multiple verification methods
+            EnhancedL5BandResult l5Result = detectComprehensiveL5BandSupport();
 
             // Step 3: Enhanced satellite detection with real-time monitoring
             detectEnhancedSatellites(hardwareResult, l5Result, (navicDetected, navicCount, totalSatellites,
@@ -904,6 +927,7 @@ public class MainActivity extends FlutterActivity {
                 response.put("chipsetModel", hardwareResult.chipsetModel);
                 response.put("verificationMethods", hardwareResult.verificationMethods);
                 response.put("hasL5Band", l5Enabled);
+                response.put("hasL5BandActive", hasL5BandActive);
                 response.put("l5BandInfo", l5Result.toMap());
                 response.put("allSatellites", allSatellites);
                 response.put("primarySystem", primarySystem);
@@ -1615,94 +1639,143 @@ public class MainActivity extends FlutterActivity {
     }
 
     /**
-     * L5 Band Detection - focused only on L5
+     * COMPREHENSIVE L5 Band Detection with multiple verification methods - FIXED VERSION
      */
-    private EnhancedL5BandResult detectEnhancedL5BandSupport() {
-        Log.d("NavIC", "📡 Starting L5 band detection");
+    private EnhancedL5BandResult detectComprehensiveL5BandSupport() {
+        Log.d("NavIC", "📡 Starting COMPREHENSIVE L5 band detection");
         EnhancedL5BandResult result = new EnhancedL5BandResult();
         List<String> detectionMethods = new ArrayList<>();
+        List<String> verificationDetails = new ArrayList<>();
+
+        int methodCount = 0;
+        double totalConfidence = 0.0;
 
         try {
             // Layer 1: GNSS Capabilities API (Android R+) - Most reliable
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Object gnssCaps = locationManager.getGnssCapabilities();
-                if (gnssCaps != null) {
-                    try {
+                try {
+                    Object gnssCaps = locationManager.getGnssCapabilities();
+                    if (gnssCaps != null) {
+                        Class<?> capsClass = gnssCaps.getClass();
+                        
                         // Check L5 capability
-                        Method hasL5Method = gnssCaps.getClass().getMethod("hasL5");
-                        Object ret = hasL5Method.invoke(gnssCaps);
-                        if (ret instanceof Boolean) {
-                            boolean hasL5 = (Boolean) ret;
-                            if (hasL5) {
-                                result.hasL5Support = true;
-                                detectionMethods.add("GNSS_CAPABILITIES_L5");
-                                result.confidence = 0.98;
-                                Log.d("NavIC", "✅ Layer 1: GNSS Capabilities API confirms L5 support");
-                            } else {
-                                Log.d("NavIC", "❌ Layer 1: GNSS Capabilities API reports NO L5 support");
+                        try {
+                            Method hasL5Method = capsClass.getMethod("hasL5");
+                            Object ret = hasL5Method.invoke(gnssCaps);
+                            if (ret instanceof Boolean) {
+                                boolean hasL5 = (Boolean) ret;
+                                if (hasL5) {
+                                    result.hasL5Support = true;
+                                    detectionMethods.add("GNSS_CAPABILITIES_L5_API");
+                                    verificationDetails.add("Android R+ GNSS Capabilities API confirms L5");
+                                    totalConfidence += 0.98;
+                                    methodCount++;
+                                    Log.d("NavIC", "✅ Layer 1: GNSS Capabilities API confirms L5 support");
+                                } else {
+                                    Log.d("NavIC", "❌ Layer 1: GNSS Capabilities API reports NO L5 support");
+                                    verificationDetails.add("GNSS Capabilities API reports no L5");
+                                    totalConfidence += 0.02; // Very low confidence for negative result
+                                    methodCount++;
+                                }
                             }
+                        } catch (NoSuchMethodException e) {
+                            Log.d("NavIC", "GNSSCapabilities.hasL5() not available");
+                            verificationDetails.add("hasL5() method not available in GNSS Capabilities");
                         }
-                    } catch (NoSuchMethodException e) {
-                        Log.d("NavIC", "GNSSCapabilities.hasL5() not available");
                     }
+                } catch (Exception e) {
+                    Log.d("NavIC", "GNSS Capabilities API access failed: " + e.getMessage());
                 }
+            } else {
+                Log.d("NavIC", "Android R+ not available for GNSS Capabilities API");
             }
 
-            // Layer 2: System Properties - L5 specific
+            // Layer 2: COMPREHENSIVE System Properties Analysis
             try {
                 Class<?> systemPropsClass = Class.forName("android.os.SystemProperties");
                 Method getMethod = systemPropsClass.getMethod("get", String.class, String.class);
 
-                // L5 specific properties
+                // L5 specific properties with confidence scores
                 String[][] l5Properties = {
                         {"ro.gnss.l5.support", "0.96"},
+                        {"ro.gnss.l5.capability", "0.95"},
                         {"persist.vendor.gnss.l5", "0.94"},
                         {"ro.hardware.gnss.l5", "0.92"},
-                        {"vendor.gnss.l5.enabled", "0.90"}
+                        {"vendor.gnss.l5.enabled", "0.90"},
+                        {"ro.gps.l5.support", "0.88"},
+                        {"vendor.gps.l5.capability", "0.87"},
+                        {"persist.sys.gps.l5", "0.85"},
+                        {"ro.gnss.l5", "0.83"},
+                        {"ro.vendor.gnss.l5", "0.82"}
                 };
 
+                boolean l5PropertyFound = false;
                 for (String[] prop : l5Properties) {
                     String value = (String) getMethod.invoke(null, prop[0], "");
                     if (!value.isEmpty()) {
+                        Log.d("NavIC", "L5 Property check: " + prop[0] + " = " + value);
+                        verificationDetails.add(prop[0] + ": " + value);
+                        
                         if (value.equalsIgnoreCase("true") || value.equals("1") ||
-                                value.toLowerCase().contains("enable") || value.toLowerCase().contains("yes") ||
-                                value.toLowerCase().contains("supported")) {
+                            value.toLowerCase().contains("enable") || value.toLowerCase().contains("yes") ||
+                            value.toLowerCase().contains("supported") || value.toLowerCase().contains("true")) {
                             result.hasL5Support = true;
                             detectionMethods.add("SYS_PROP_" + prop[0].replace(".", "_").toUpperCase());
                             double propConfidence = Double.parseDouble(prop[1]);
-                            result.confidence = Math.max(result.confidence, propConfidence);
+                            totalConfidence += propConfidence;
+                            methodCount++;
+                            l5PropertyFound = true;
                             Log.d("NavIC", "✅ Layer 2: System property confirms L5: " + prop[0] + "=" + value);
                             break;
                         }
                     }
                 }
+                
+                if (!l5PropertyFound) {
+                    Log.d("NavIC", "No L5-specific system properties found");
+                    verificationDetails.add("No L5 system properties detected");
+                }
             } catch (Exception e) {
-                Log.d("NavIC", "Could not access system properties for L5 detection");
+                Log.d("NavIC", "Could not access system properties for L5 detection: " + e.getMessage());
             }
 
-            // Layer 3: Hardware Feature Detection for L5
+            // Layer 3: Chipset-based L5 Detection
+            EnhancedChipsetL5Result chipsetL5Result = detectChipsetL5Capability();
+            if (chipsetL5Result.hasL5Support) {
+                result.hasL5Support = true;
+                detectionMethods.add("CHIPSET_L5_" + chipsetL5Result.detectionMethod);
+                verificationDetails.addAll(chipsetL5Result.verificationDetails);
+                totalConfidence += chipsetL5Result.confidence;
+                methodCount++;
+                Log.d("NavIC", "✅ Layer 3: Chipset analysis indicates L5 support");
+            }
+
+            // Layer 4: Hardware Feature Detection for L5
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 PackageManager pm = getPackageManager();
                 if (pm.hasSystemFeature(PackageManager.FEATURE_LOCATION_GPS)) {
-                    // Check for L5 features using reflection
+                    // Check for L5 features using reflection on LocationManager
                     try {
-                        // Try to get GNSS hardware features from LocationManager
                         Field[] fields = LocationManager.class.getDeclaredFields();
+                        boolean l5FeatureFound = false;
+                        
                         for (Field field : fields) {
                             String fieldName = field.getName().toLowerCase();
-                            if (fieldName.contains("l5")) {
+                            if (fieldName.contains("l5") || fieldName.contains("frequency") || 
+                                fieldName.contains("band") || fieldName.contains("gnss")) {
                                 field.setAccessible(true);
                                 try {
                                     Object value = field.get(locationManager);
                                     if (value != null) {
                                         String valueStr = value.toString().toLowerCase();
-                                        if (valueStr.contains("true") || valueStr.contains("enable") || 
-                                            valueStr.contains("support") || valueStr.contains("yes") ||
-                                            valueStr.contains("1")) {
+                                        if (valueStr.contains("l5") || valueStr.contains("1176")) {
                                             result.hasL5Support = true;
                                             detectionMethods.add("HARDWARE_FEATURE_" + field.getName().toUpperCase());
-                                            result.confidence = Math.max(result.confidence, 0.90);
-                                            Log.d("NavIC", "✅ Layer 3: Hardware feature indicates L5: " + field.getName());
+                                            verificationDetails.add("Hardware feature: " + field.getName() + " = " + valueStr);
+                                            totalConfidence += 0.85;
+                                            methodCount++;
+                                            l5FeatureFound = true;
+                                            Log.d("NavIC", "✅ Layer 4: Hardware feature indicates L5: " + field.getName());
                                             break;
                                         }
                                     }
@@ -1711,43 +1784,226 @@ public class MainActivity extends FlutterActivity {
                                 }
                             }
                         }
+                        
+                        if (!l5FeatureFound) {
+                            verificationDetails.add("No L5 hardware features detected via reflection");
+                        }
                     } catch (Exception e) {
-                        Log.d("NavIC", "Reflection-based L5 feature detection failed");
+                        Log.d("NavIC", "Reflection-based L5 feature detection failed: " + e.getMessage());
                     }
                 }
             }
 
-            // Final confidence calculation with method count weighting
-            if (!detectionMethods.isEmpty()) {
-                double methodBonus = Math.min(0.20, detectionMethods.size() * 0.03);
-                result.confidence = Math.min(1.0, result.confidence + methodBonus);
+            // Layer 5: Build Property Analysis for L5-capable devices
+            boolean isL5CapableDevice = checkBuildPropertiesForL5();
+            if (isL5CapableDevice) {
+                result.hasL5Support = true;
+                detectionMethods.add("BUILD_PROPERTY_L5");
+                verificationDetails.add("Build properties indicate L5-capable device");
+                totalConfidence += 0.75;
+                methodCount++;
+                Log.d("NavIC", "✅ Layer 5: Build properties indicate L5 capability");
+            }
 
-                // Additional confidence for multiple verification methods
+            // Layer 6: Check for actual L5 usage in detected satellites
+            boolean hasL5Satellites = checkForL5SatellitesInView();
+            if (hasL5Satellites) {
+                result.hasL5Support = true;
+                hasL5BandActive = true;
+                detectionMethods.add("ACTIVE_L5_SATELLITES");
+                verificationDetails.add("Active L5 satellites detected in view");
+                totalConfidence += 0.99; // Highest confidence for actual usage
+                methodCount++;
+                Log.d("NavIC", "✅ Layer 6: ACTIVE L5 satellites detected!");
+            }
+
+            // Calculate final confidence with weighted average
+            if (methodCount > 0) {
+                result.confidence = totalConfidence / methodCount;
+                
+                // Apply bonuses for multiple verification methods
+                if (detectionMethods.size() >= 2) {
+                    result.confidence = Math.min(1.0, result.confidence + 0.05);
+                }
                 if (detectionMethods.size() >= 3) {
                     result.confidence = Math.min(1.0, result.confidence + 0.05);
                 }
+                if (hasL5Satellites) {
+                    result.confidence = Math.min(1.0, result.confidence + 0.10); // Extra bonus for actual usage
+                }
+            } else {
+                result.confidence = 0.0;
             }
 
             // Set final result
             hasL5BandSupport = result.hasL5Support;
             l5Confidence = result.confidence;
             result.detectionMethods = detectionMethods;
+            result.verificationDetails = verificationDetails;
 
             Log.d("NavIC", String.format(
-                    "📡 L5 Detection Result:\n" +
-                            "  Supported: %s\n" +
-                            "  Confidence: %.2f%%\n" +
-                            "  Methods: %s\n" +
-                            "  Method Count: %d",
-                    result.hasL5Support, result.confidence * 100,
-                    String.join(", ", detectionMethods), detectionMethods.size()
+                    "📡 COMPREHENSIVE L5 Detection Result:\n" +
+                    "  Supported: %s\n" +
+                    "  Active Usage: %s\n" +
+                    "  Confidence: %.2f%%\n" +
+                    "  Methods: %s\n" +
+                    "  Method Count: %d\n" +
+                    "  Verification Details: %s",
+                    result.hasL5Support, hasL5BandActive, result.confidence * 100,
+                    String.join(", ", detectionMethods), detectionMethods.size(),
+                    String.join("; ", verificationDetails)
             ));
 
         } catch (Exception e) {
-            Log.e("NavIC", "❌ Error in L5 band detection", e);
+            Log.e("NavIC", "❌ Error in comprehensive L5 band detection", e);
         }
 
         return result;
+    }
+
+    /**
+     * Check chipset L5 capability
+     */
+    private EnhancedChipsetL5Result detectChipsetL5Capability() {
+        EnhancedChipsetL5Result result = new EnhancedChipsetL5Result();
+        List<String> verificationDetails = new ArrayList<>();
+
+        try {
+            String hardware = Build.HARDWARE.toLowerCase();
+            String board = Build.BOARD.toLowerCase();
+            String socModel = getSoCModel().toLowerCase();
+            String device = Build.DEVICE.toLowerCase();
+
+            // Check Qualcomm L5 chipsets
+            for (String chipset : QUALCOMM_L5_CHIPSETS) {
+                if (hardware.contains(chipset) || board.contains(chipset) || 
+                    socModel.contains(chipset) || device.contains(chipset)) {
+                    result.hasL5Support = true;
+                    result.detectionMethod = "QUALCOMM_L5_CHIPSET";
+                    result.confidence = 0.90;
+                    verificationDetails.add("Qualcomm L5 chipset detected: " + chipset);
+                    Log.d("NavIC", "✅ Qualcomm L5-capable chipset: " + chipset);
+                    break;
+                }
+            }
+
+            // Check MediaTek L5 chipsets
+            if (!result.hasL5Support) {
+                for (String chipset : MEDIATEK_L5_CHIPSETS) {
+                    if (hardware.contains(chipset) || board.contains(chipset) || 
+                        socModel.contains(chipset) || device.contains(chipset)) {
+                        result.hasL5Support = true;
+                        result.detectionMethod = "MEDIATEK_L5_CHIPSET";
+                        result.confidence = 0.88;
+                        verificationDetails.add("MediaTek L5 chipset detected: " + chipset);
+                        Log.d("NavIC", "✅ MediaTek L5-capable chipset: " + chipset);
+                        break;
+                    }
+                }
+            }
+
+            // Check Samsung L5 chipsets
+            if (!result.hasL5Support) {
+                for (String chipset : SAMSUNG_L5_CHIPSETS) {
+                    if (hardware.contains(chipset) || board.contains(chipset) || 
+                        socModel.contains(chipset)) {
+                        result.hasL5Support = true;
+                        result.detectionMethod = "SAMSUNG_L5_CHIPSET";
+                        result.confidence = 0.85;
+                        verificationDetails.add("Samsung L5 chipset detected: " + chipset);
+                        Log.d("NavIC", "✅ Samsung L5-capable chipset: " + chipset);
+                        break;
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            Log.e("NavIC", "Error in chipset L5 detection", e);
+        }
+
+        result.verificationDetails = verificationDetails;
+        return result;
+    }
+
+    /**
+     * Check build properties for L5 capability
+     */
+    private boolean checkBuildPropertiesForL5() {
+        try {
+            // Check for known L5-capable devices based on model/manufacturer
+            String manufacturer = Build.MANUFACTURER.toLowerCase();
+            String model = Build.MODEL.toLowerCase();
+            String device = Build.DEVICE.toLowerCase();
+            String product = Build.PRODUCT.toLowerCase();
+
+            // Known L5-capable device patterns
+            boolean isFlagshipDevice = 
+                model.contains("pixel") || 
+                model.contains("galaxy s2") || model.contains("galaxy s22") || model.contains("galaxy s23") || model.contains("galaxy s24") ||
+                model.contains("oneplus") || model.contains("find x") || model.contains("mi ") || model.contains("redmi") ||
+                product.contains("flagship") || device.contains("flagship");
+
+            // Check Android version (L5 more common in newer versions)
+            boolean isNewAndroid = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R; // Android 11+
+
+            // Check for high-end chipset indicators
+            boolean hasHighEndChipset = 
+                Build.HARDWARE.toLowerCase().contains("sm8") ||  // Snapdragon 8 series
+                Build.HARDWARE.toLowerCase().contains("mt69") || // Dimensity 9000 series
+                Build.HARDWARE.toLowerCase().contains("s5e9");   // Exynos flagship
+
+            Log.d("NavIC", String.format(
+                "L5 Build Analysis: Flagship=%s, NewAndroid=%s, HighEndChipset=%s",
+                isFlagshipDevice, isNewAndroid, hasHighEndChipset
+            ));
+
+            return (isFlagshipDevice && isNewAndroid) || hasHighEndChipset;
+
+        } catch (Exception e) {
+            Log.e("NavIC", "Error checking build properties for L5", e);
+            return false;
+        }
+    }
+
+    /**
+     * Check for actual L5 satellites in view
+     */
+    private boolean checkForL5SatellitesInView() {
+        int l5SatelliteCount = 0;
+        
+        try {
+            // Check recently detected satellites for L5 frequencies
+            for (EnhancedSatellite sat : detectedSatellites.values()) {
+                if (sat.carrierFrequency > 0) {
+                    // Check if frequency is within L5 range (1176.45 MHz ± tolerance)
+                    double freqMHz = sat.carrierFrequency / 1e6;
+                    if (Math.abs(freqMHz - 1176.45) <= 2.0) { // ±2 MHz tolerance
+                        l5SatelliteCount++;
+                        Log.d("NavIC", String.format(
+                            "✅ L5 Satellite detected: %s %d @ %.2f MHz (L5 band)",
+                            sat.systemName, sat.svid, freqMHz
+                        ));
+                    } else if (sat.frequencyBand != null && 
+                              (sat.frequencyBand.equals("L5") || sat.frequencyBand.contains("L5") || 
+                               sat.frequencyBand.equals("E5a") || sat.frequencyBand.equals("B2a"))) {
+                        l5SatelliteCount++;
+                        Log.d("NavIC", String.format(
+                            "✅ L5 Satellite detected via band: %s %d @ %s",
+                            sat.systemName, sat.svid, sat.frequencyBand
+                        ));
+                    }
+                }
+            }
+            
+            if (l5SatelliteCount > 0) {
+                Log.d("NavIC", "Found " + l5SatelliteCount + " L5 satellites in view");
+                return true;
+            }
+        } catch (Exception e) {
+            Log.e("NavIC", "Error checking for L5 satellites", e);
+        }
+        
+        return false;
     }
 
     private String getEnhancedChipsetInfo() {
@@ -1917,6 +2173,12 @@ public class MainActivity extends FlutterActivity {
                 existingSat.usedInFix = existingSat.usedInFix || newSat.usedInFix;
                 existingSat.elevation = (existingSat.elevation + newSat.elevation) / 2;
                 existingSat.azimuth = (existingSat.azimuth + newSat.azimuth) / 2;
+                
+                // Update frequency information if available
+                if (newSat.carrierFrequency > 0) {
+                    existingSat.carrierFrequency = newSat.carrierFrequency;
+                    existingSat.frequencyBand = newSat.frequencyBand;
+                }
             } else {
                 detectedSatellites.put(key, newSat);
             }
@@ -1925,6 +2187,33 @@ public class MainActivity extends FlutterActivity {
         // Update satellites by system
         satellitesBySystem.clear();
         satellitesBySystem.putAll(scanResult.satellitesBySystem);
+        
+        // Check for L5 activity
+        checkForL5Activity();
+    }
+    
+    /**
+     * Check for active L5 band usage
+     */
+    private void checkForL5Activity() {
+        int l5Satellites = 0;
+        for (EnhancedSatellite sat : detectedSatellites.values()) {
+            if (sat.carrierFrequency > 0) {
+                double freqMHz = sat.carrierFrequency / 1e6;
+                if (Math.abs(freqMHz - 1176.45) <= 2.0) {
+                    l5Satellites++;
+                }
+            } else if (sat.frequencyBand != null && 
+                      (sat.frequencyBand.equals("L5") || sat.frequencyBand.contains("L5") || 
+                       sat.frequencyBand.equals("E5a") || sat.frequencyBand.equals("B2a"))) {
+                l5Satellites++;
+            }
+        }
+        
+        hasL5BandActive = l5Satellites > 0;
+        if (hasL5BandActive) {
+            Log.d("NavIC", "✅ L5 band ACTIVE with " + l5Satellites + " L5 satellites");
+        }
     }
 
     private EnhancedSatelliteScanResult getCurrentEnhancedScanResult(boolean hasL5Support) {
@@ -2025,13 +2314,16 @@ public class MainActivity extends FlutterActivity {
                             "  Average Signal: %.1f dB-Hz\n" +
                             "  Detection Time: %d ms\n" +
                             "  Primary System: %s\n" +
-                            "  L5 Band: %s",
+                            "  L5 Band: %s (Active: %s)\n" +
+                            "  L5 Confidence: %.1f%%",
                     detected ? "✅ SUCCESS" : "❌ FAILED",
                     result.navicCount, result.navicUsedInFix,
                     result.totalSatellites, result.satellitesBySystem.size(),
                     result.navicSignalStrength, elapsedTime,
                     primaryPositioningSystem,
-                    hasL5BandSupport ? "✅ Available" : "❌ Not Available"
+                    hasL5BandSupport ? "✅ Available" : "❌ Not Available",
+                    hasL5BandActive ? "✅ Yes" : "❌ No",
+                    l5Confidence * 100
             ));
 
             cb.onResult(detected, result.navicCount, result.totalSatellites,
@@ -2056,6 +2348,7 @@ public class MainActivity extends FlutterActivity {
             int usedCount = 0;
             float avgSignal = 0;
             int signalCount = 0;
+            int l5Count = 0;
 
             for (EnhancedSatellite sat : satellites) {
                 if (sat.usedInFix) usedCount++;
@@ -2063,12 +2356,15 @@ public class MainActivity extends FlutterActivity {
                     avgSignal += sat.cn0;
                     signalCount++;
                 }
+                if (sat.frequencyBand != null && sat.frequencyBand.contains("L5")) {
+                    l5Count++;
+                }
             }
 
             if (signalCount > 0) avgSignal /= signalCount;
 
-            logMsg.append(String.format("%s: %d sats (%d in fix, %.1f dB-Hz avg) ",
-                    system, satellites.size(), usedCount, avgSignal));
+            logMsg.append(String.format("%s: %d sats (%d in fix, %.1f dB-Hz avg, %d L5) ",
+                    system, satellites.size(), usedCount, avgSignal, l5Count));
         }
 
         Log.d("NavIC", logMsg.toString());
@@ -2204,24 +2500,28 @@ public class MainActivity extends FlutterActivity {
     private String determineFrequencyBandFromHz(double frequencyHz) {
         double freqMHz = frequencyHz / 1e6;
 
-        // L5/E5a/B2a frequency
-        if (Math.abs(freqMHz - 1176.45) < 2.0) return "L5";
-        // L1/E1/B1 frequency
-        if (Math.abs(freqMHz - 1575.42) < 2.0) return "L1";
-        // L2 frequency
-        if (Math.abs(freqMHz - 1227.60) < 2.0) return "L2";
-        // NavIC S-band
-        if (Math.abs(freqMHz - 2492.028) < 2.0) return "S";
-        // GLONASS G1
-        if (Math.abs(freqMHz - 1602.0) < 2.0) return "G1";
-        // GLONASS G2
-        if (Math.abs(freqMHz - 1246.0) < 2.0) return "G2";
-        // Galileo E5
-        if (Math.abs(freqMHz - 1207.14) < 2.0) return "E5";
-        // BeiDou B2
-        if (Math.abs(freqMHz - 1207.14) < 2.0) return "B2";
-        // BeiDou B3
-        if (Math.abs(freqMHz - 1268.52) < 2.0) return "B3";
+        // L5/E5a/B2a frequency (1176.45 MHz)
+        if (Math.abs(freqMHz - 1176.45) <= 2.0) return "L5";
+        // L1/E1/B1 frequency (1575.42 MHz)
+        if (Math.abs(freqMHz - 1575.42) <= 2.0) return "L1";
+        // L2 frequency (1227.60 MHz)
+        if (Math.abs(freqMHz - 1227.60) <= 2.0) return "L2";
+        // NavIC S-band (2492.028 MHz)
+        if (Math.abs(freqMHz - 2492.028) <= 2.0) return "S";
+        // GLONASS G1 (1602.0 MHz)
+        if (Math.abs(freqMHz - 1602.0) <= 2.0) return "G1";
+        // GLONASS G2 (1246.0 MHz)
+        if (Math.abs(freqMHz - 1246.0) <= 2.0) return "G2";
+        // Galileo E5 (1207.14 MHz)
+        if (Math.abs(freqMHz - 1207.14) <= 2.0) return "E5";
+        // BeiDou B2 (1207.14 MHz)
+        if (Math.abs(freqMHz - 1207.14) <= 2.0) return "B2";
+        // BeiDou B3 (1268.52 MHz)
+        if (Math.abs(freqMHz - 1268.52) <= 2.0) return "B3";
+        // GLONASS G3 (1202.025 MHz)
+        if (Math.abs(freqMHz - 1202.025) <= 2.0) return "G3";
+        // Galileo E6 (1278.75 MHz)
+        if (Math.abs(freqMHz - 1278.75) <= 2.0) return "E6";
 
         return String.format("%.0f MHz", freqMHz);
     }
@@ -2324,7 +2624,12 @@ public class MainActivity extends FlutterActivity {
                 message.append(String.format("Acquisition time: %d ms. ", acquisitionTime));
 
                 if (l5Result.hasL5Support) {
-                    message.append("L5 band enabled for enhanced accuracy.");
+                    message.append("L5 band ");
+                    if (hasL5BandActive) {
+                        message.append("ACTIVE for enhanced accuracy.");
+                    } else {
+                        message.append("available but not currently in use.");
+                    }
                 } else {
                     message.append("L5 band not available.");
                 }
@@ -2344,6 +2649,11 @@ public class MainActivity extends FlutterActivity {
             message.append(String.format(" Chipset: %s %s (%.0f%% confidence).",
                     hardwareResult.chipsetVendor, hardwareResult.chipsetModel,
                     hardwareResult.confidenceLevel * 100));
+        }
+
+        // Add L5 info
+        if (l5Result.hasL5Support) {
+            message.append(String.format(" L5 support: %.0f%% confidence.", l5Result.confidence * 100));
         }
 
         return message.toString();
@@ -2394,6 +2704,7 @@ public class MainActivity extends FlutterActivity {
         response.put("systems", new ArrayList<>(systems.values()));
         response.put("totalSatellites", allSatellites.size());
         response.put("hasL5Band", hasL5BandSupport);
+        response.put("hasL5BandActive", hasL5BandActive);
         response.put("primarySystem", primaryPositioningSystem);
         response.put("chipset", detectedChipset);
         response.put("chipsetVendor", chipsetVendor);
@@ -2401,8 +2712,8 @@ public class MainActivity extends FlutterActivity {
         response.put("l5Confidence", l5Confidence);
         response.put("timestamp", System.currentTimeMillis());
 
-        Log.d("NavIC", String.format("📊 Returning %d satellites from %d systems",
-                allSatellites.size(), systems.size()));
+        Log.d("NavIC", String.format("📊 Returning %d satellites from %d systems, L5 Active: %s",
+                allSatellites.size(), systems.size(), hasL5BandActive));
 
         result.success(response);
     }
@@ -2459,6 +2770,9 @@ public class MainActivity extends FlutterActivity {
             caps.put("gnssCapabilities", gnssMap);
             caps.put("capabilitiesMethod", "ENHANCED_HARDWARE_DETECTION_V2");
             caps.put("detectionTime", System.currentTimeMillis());
+            caps.put("hasL5Band", hasL5BandSupport);
+            caps.put("hasL5BandActive", hasL5BandActive);
+            caps.put("l5Confidence", l5Confidence);
 
             Log.d("NavIC", "Enhanced GNSS capabilities retrieved successfully");
             result.success(caps);
@@ -2511,8 +2825,10 @@ public class MainActivity extends FlutterActivity {
             resp.put("success", true);
             resp.put("message", "Enhanced real-time NavIC detection started");
             resp.put("hasL5Band", hasL5BandSupport);
+            resp.put("hasL5BandActive", hasL5BandActive);
             resp.put("chipset", detectedChipset);
             resp.put("chipsetVendor", chipsetVendor);
+            resp.put("l5Confidence", l5Confidence);
             Log.d("NavIC", "Enhanced real-time detection started successfully");
             result.success(resp);
         } catch (SecurityException se) {
@@ -2545,6 +2861,7 @@ public class MainActivity extends FlutterActivity {
         int beidouUsedInFix = 0;
         int qzssUsedInFix = 0;
 
+        int l5SatelliteCount = 0;
         float irnssSignalTotal = 0;
         float gpsSignalTotal = 0;
         int irnssSignalCount = 0;
@@ -2566,12 +2883,19 @@ public class MainActivity extends FlutterActivity {
             // Determine frequency band
             String frequencyBand = "Unknown";
             double carrierFrequency = 0.0;
+            boolean isL5Band = false;
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 try {
                     carrierFrequency = status.getCarrierFrequencyHz(i);
                     if (carrierFrequency > 0) {
                         frequencyBand = determineFrequencyBandFromHz(carrierFrequency);
+                        // Check if this is L5 band
+                        double freqMHz = carrierFrequency / 1e6;
+                        if (Math.abs(freqMHz - 1176.45) <= 2.0) {
+                            isL5Band = true;
+                            l5SatelliteCount++;
+                        }
                     }
                 } catch (Exception e) {
                     frequencyBand = getDefaultBandForConstellation(constellationType, hasL5BandSupport);
@@ -2623,6 +2947,7 @@ public class MainActivity extends FlutterActivity {
             sat.put("usedInFix", used);
             sat.put("frequencyBand", frequencyBand);
             sat.put("carrierFrequencyHz", carrierFrequency);
+            sat.put("isL5Band", isL5Band);
 
             // Calculate signal strength level
             String signalStrength = "UNKNOWN";
@@ -2638,6 +2963,12 @@ public class MainActivity extends FlutterActivity {
             if (constellationType == GnssStatus.CONSTELLATION_IRNSS) {
                 navicSatellites.add(sat);
             }
+        }
+
+        // Update L5 active status if we found L5 satellites
+        if (l5SatelliteCount > 0 && !hasL5BandActive) {
+            hasL5BandActive = true;
+            Log.d("NavIC", "Real-time update: Found " + l5SatelliteCount + " L5 satellites");
         }
 
         constellations.put("IRNSS", irnssCount);
@@ -2675,17 +3006,20 @@ public class MainActivity extends FlutterActivity {
         result.put("navicSatellitesCount", irnssCount);
         result.put("navicUsedInFix", irnssUsedInFix);
         result.put("navicAverageSignal", irnssAvgSignal);
+        result.put("l5SatelliteCount", l5SatelliteCount);
+        result.put("hasL5BandActive", l5SatelliteCount > 0);
         result.put("primarySystem", primarySystem);
         result.put("hasL5Band", hasL5BandSupport);
-        result.put("locationProvider", primarySystem + (hasL5BandSupport ? "_L5" : ""));
+        result.put("locationProvider", primarySystem + (l5SatelliteCount > 0 ? "_L5" : ""));
         result.put("chipsetInfo", detectedChipset);
         result.put("chipsetVendor", chipsetVendor);
+        result.put("l5Confidence", l5Confidence);
 
         // Log update summary
         Log.d("NavIC", String.format(
-                "📡 Enhanced Update - Primary: %s, NavIC: %d(%d), GPS: %d(%d), Total: %d, L5: %s, Chipset: %s",
+                "📡 Enhanced Update - Primary: %s, NavIC: %d(%d), GPS: %d(%d), Total: %d, L5: %d, Chipset: %s",
                 primarySystem, irnssCount, irnssUsedInFix, gpsCount, gpsUsedInFix,
-                status.getSatelliteCount(), hasL5BandSupport ? "Yes" : "No", detectedChipset
+                status.getSatelliteCount(), l5SatelliteCount, detectedChipset
         ));
 
         return result;
@@ -2780,6 +3114,7 @@ public class MainActivity extends FlutterActivity {
                     if (!detectedSatellites.isEmpty()) {
                         locationData.put("satelliteCount", detectedSatellites.size());
                         locationData.put("hasL5Band", hasL5BandSupport);
+                        locationData.put("hasL5BandActive", hasL5BandActive);
                         locationData.put("primarySystem", primaryPositioningSystem);
                     }
 
@@ -2987,6 +3322,8 @@ public class MainActivity extends FlutterActivity {
             deviceInfo.put("detectedChipset", detectedChipset);
             deviceInfo.put("chipsetVendor", chipsetVendor);
             deviceInfo.put("hasL5Band", hasL5BandSupport);
+            deviceInfo.put("hasL5BandActive", hasL5BandActive);
+            deviceInfo.put("l5Confidence", l5Confidence);
             deviceInfo.put("detectionTime", System.currentTimeMillis());
 
             result.success(deviceInfo);
@@ -3060,13 +3397,16 @@ public class MainActivity extends FlutterActivity {
             summary.put("timestamp", System.currentTimeMillis());
             summary.put("totalSatellites", detectedSatellites.size());
             summary.put("hasL5Band", hasL5BandSupport);
+            summary.put("hasL5BandActive", hasL5BandActive);
             summary.put("primarySystem", primaryPositioningSystem);
             summary.put("chipset", detectedChipset);
             summary.put("chipsetVendor", chipsetVendor);
+            summary.put("l5Confidence", l5Confidence);
 
             // Count satellites by system
             Map<String, Integer> systemCounts = new HashMap<>();
             Map<String, Integer> systemUsedCounts = new HashMap<>();
+            Map<String, Integer> l5SatellitesBySystem = new HashMap<>();
 
             for (EnhancedSatellite sat : detectedSatellites.values()) {
                 String system = sat.systemName;
@@ -3074,10 +3414,21 @@ public class MainActivity extends FlutterActivity {
                 if (sat.usedInFix) {
                     systemUsedCounts.put(system, systemUsedCounts.getOrDefault(system, 0) + 1);
                 }
+                // Check for L5
+                if (sat.frequencyBand != null && sat.frequencyBand.contains("L5")) {
+                    l5SatellitesBySystem.put(system, l5SatellitesBySystem.getOrDefault(system, 0) + 1);
+                } else if (sat.carrierFrequency > 0) {
+                    double freqMHz = sat.carrierFrequency / 1e6;
+                    if (Math.abs(freqMHz - 1176.45) <= 2.0) {
+                        l5SatellitesBySystem.put(system, l5SatellitesBySystem.getOrDefault(system, 0) + 1);
+                    }
+                }
             }
 
             summary.put("systemCounts", systemCounts);
             summary.put("systemUsedCounts", systemUsedCounts);
+            summary.put("l5SatellitesBySystem", l5SatellitesBySystem);
+            summary.put("totalL5Satellites", l5SatellitesBySystem.values().stream().mapToInt(Integer::intValue).sum());
 
             result.success(summary);
 
@@ -3107,12 +3458,15 @@ public class MainActivity extends FlutterActivity {
                 nameInfo.put("system", sat.systemName);
                 nameInfo.put("name", getSatelliteName(sat.systemName, sat.svid));
                 nameInfo.put("countryFlag", sat.countryFlag);
+                nameInfo.put("frequencyBand", sat.frequencyBand);
+                nameInfo.put("isL5Band", sat.frequencyBand != null && sat.frequencyBand.contains("L5"));
                 satelliteNames.add(nameInfo);
             }
 
             Map<String, Object> response = new HashMap<>();
             response.put("satelliteNames", satelliteNames);
             response.put("timestamp", System.currentTimeMillis());
+            response.put("hasL5Satellites", satelliteNames.stream().anyMatch(n -> (Boolean) n.get("isL5Band")));
 
             result.success(response);
 
@@ -3148,6 +3502,7 @@ public class MainActivity extends FlutterActivity {
                 int usedCount = 0;
                 float totalSignal = 0;
                 int signalCount = 0;
+                int l5Count = 0;
 
                 for (EnhancedSatellite sat : satellites) {
                     if (sat.usedInFix) usedCount++;
@@ -3155,10 +3510,14 @@ public class MainActivity extends FlutterActivity {
                         totalSignal += sat.cn0;
                         signalCount++;
                     }
+                    if (sat.frequencyBand != null && sat.frequencyBand.contains("L5")) {
+                        l5Count++;
+                    }
                 }
 
                 systemDetails.put("usedCount", usedCount);
                 systemDetails.put("averageSignal", signalCount > 0 ? totalSignal / signalCount : 0);
+                systemDetails.put("l5SatelliteCount", l5Count);
                 systemDetails.put("frequencies", GNSS_FREQUENCIES.getOrDefault(system, new Double[]{0.0}));
 
                 constellationDetails.put(system, systemDetails);
@@ -3167,6 +3526,7 @@ public class MainActivity extends FlutterActivity {
             Map<String, Object> response = new HashMap<>();
             response.put("constellationDetails", constellationDetails);
             response.put("timestamp", System.currentTimeMillis());
+            response.put("hasL5BandActive", hasL5BandActive);
 
             result.success(response);
 
@@ -3200,6 +3560,8 @@ public class MainActivity extends FlutterActivity {
 
             float totalSignal = 0;
             int signalCount = 0;
+            int l5SignalCount = 0;
+            float l5TotalSignal = 0;
 
             for (EnhancedSatellite sat : detectedSatellites.values()) {
                 String strengthLevel = sat.getSignalStrengthLevel();
@@ -3208,12 +3570,20 @@ public class MainActivity extends FlutterActivity {
                 if (sat.cn0 > 0) {
                     totalSignal += sat.cn0;
                     signalCount++;
+                    
+                    // Check for L5
+                    if (sat.frequencyBand != null && sat.frequencyBand.contains("L5")) {
+                        l5TotalSignal += sat.cn0;
+                        l5SignalCount++;
+                    }
                 }
             }
 
             analysis.put("strengthDistribution", strengthDistribution);
             analysis.put("averageSignal", signalCount > 0 ? totalSignal / signalCount : 0);
             analysis.put("signalCount", signalCount);
+            analysis.put("l5SignalCount", l5SignalCount);
+            analysis.put("l5AverageSignal", l5SignalCount > 0 ? l5TotalSignal / l5SignalCount : 0);
             analysis.put("timestamp", System.currentTimeMillis());
 
             result.success(analysis);
@@ -3246,6 +3616,8 @@ public class MainActivity extends FlutterActivity {
                 data.put("azimuth", sat.azimuth);
                 data.put("signalStrength", sat.cn0);
                 data.put("usedInFix", sat.usedInFix);
+                data.put("frequencyBand", sat.frequencyBand);
+                data.put("isL5Band", sat.frequencyBand != null && sat.frequencyBand.contains("L5"));
                 positionData.add(data);
             }
 
@@ -3282,12 +3654,14 @@ public class MainActivity extends FlutterActivity {
                 data.put("frequencyBand", sat.frequencyBand);
                 data.put("carrierFrequencyHz", sat.carrierFrequency > 0 ? sat.carrierFrequency : null);
                 data.put("signalStrength", sat.cn0);
+                data.put("isL5Band", sat.frequencyBand != null && sat.frequencyBand.contains("L5"));
                 frequencyData.add(data);
             }
 
             Map<String, Object> response = new HashMap<>();
             response.put("frequencyData", frequencyData);
             response.put("hasL5Band", hasL5BandSupport);
+            response.put("hasL5BandActive", hasL5BandActive);
             response.put("timestamp", System.currentTimeMillis());
 
             result.success(response);
@@ -3314,15 +3688,24 @@ public class MainActivity extends FlutterActivity {
 
             int hasEphemerisCount = 0;
             int hasAlmanacCount = 0;
+            int l5EphemerisCount = 0;
+            int l5AlmanacCount = 0;
 
             for (EnhancedSatellite sat : detectedSatellites.values()) {
                 if (sat.hasEphemeris) hasEphemerisCount++;
                 if (sat.hasAlmanac) hasAlmanacCount++;
+                
+                if (sat.frequencyBand != null && sat.frequencyBand.contains("L5")) {
+                    if (sat.hasEphemeris) l5EphemerisCount++;
+                    if (sat.hasAlmanac) l5AlmanacCount++;
+                }
             }
 
             status.put("totalSatellites", detectedSatellites.size());
             status.put("hasEphemerisCount", hasEphemerisCount);
             status.put("hasAlmanacCount", hasAlmanacCount);
+            status.put("l5EphemerisCount", l5EphemerisCount);
+            status.put("l5AlmanacCount", l5AlmanacCount);
             status.put("ephemerisPercentage", detectedSatellites.size() > 0 ?
                     (hasEphemerisCount * 100.0 / detectedSatellites.size()) : 0);
             status.put("almanacPercentage", detectedSatellites.size() > 0 ?
@@ -3359,6 +3742,8 @@ public class MainActivity extends FlutterActivity {
                 history.put("firstDetectionTime", sat.detectionTime);
                 history.put("lastDetectionTime", System.currentTimeMillis());
                 history.put("averageSignal", sat.cn0);
+                history.put("frequencyBand", sat.frequencyBand);
+                history.put("isL5Band", sat.frequencyBand != null && sat.frequencyBand.contains("L5"));
                 detectionHistory.add(history);
             }
 
@@ -3404,6 +3789,7 @@ public class MainActivity extends FlutterActivity {
             diversityReport.put("diversityScore", diversityScore);
             diversityReport.put("diversityLevel", getDiversityLevel(diversityScore));
             diversityReport.put("hasL5Band", hasL5BandSupport);
+            diversityReport.put("hasL5BandActive", hasL5BandActive);
             diversityReport.put("primarySystem", primaryPositioningSystem);
             diversityReport.put("timestamp", System.currentTimeMillis());
 
@@ -3437,7 +3823,9 @@ public class MainActivity extends FlutterActivity {
             response.put("status", "REALTIME_STREAM_ACTIVE");
             response.put("message", "Real-time satellite stream is active");
             response.put("hasL5Band", hasL5BandSupport);
+            response.put("hasL5BandActive", hasL5BandActive);
             response.put("chipset", detectedChipset);
+            response.put("l5Confidence", l5Confidence);
             response.put("timestamp", System.currentTimeMillis());
 
             result.success(response);
@@ -3470,6 +3858,13 @@ public class MainActivity extends FlutterActivity {
             int fairCount = 0;
             int weakCount = 0;
             int poorCount = 0;
+            
+            // L5-specific metrics
+            float l5TotalSignal = 0;
+            int l5SignalCount = 0;
+            int l5ExcellentCount = 0;
+            int l5GoodCount = 0;
+            int l5FairCount = 0;
 
             for (EnhancedSatellite sat : detectedSatellites.values()) {
                 if (sat.cn0 > 0) {
@@ -3484,6 +3879,17 @@ public class MainActivity extends FlutterActivity {
                         case "WEAK": weakCount++; break;
                         case "POOR": poorCount++; break;
                     }
+                    
+                    // L5-specific counting
+                    if (sat.frequencyBand != null && sat.frequencyBand.contains("L5")) {
+                        l5TotalSignal += sat.cn0;
+                        l5SignalCount++;
+                        switch (strength) {
+                            case "EXCELLENT": l5ExcellentCount++; break;
+                            case "GOOD": l5GoodCount++; break;
+                            case "FAIR": l5FairCount++; break;
+                        }
+                    }
                 }
             }
 
@@ -3497,6 +3903,16 @@ public class MainActivity extends FlutterActivity {
             signalQuality.put("poorCount", poorCount);
             signalQuality.put("qualityScore", calculateQualityScore(excellentCount, goodCount, fairCount,
                     weakCount, poorCount, signalCount));
+            
+            // L5-specific quality
+            signalQuality.put("l5SatellitesWithSignal", l5SignalCount);
+            signalQuality.put("l5AverageSignal", l5SignalCount > 0 ? l5TotalSignal / l5SignalCount : 0);
+            signalQuality.put("l5ExcellentCount", l5ExcellentCount);
+            signalQuality.put("l5GoodCount", l5GoodCount);
+            signalQuality.put("l5FairCount", l5FairCount);
+            signalQuality.put("l5QualityScore", l5SignalCount > 0 ? 
+                    calculateQualityScore(l5ExcellentCount, l5GoodCount, l5FairCount, 0, 0, l5SignalCount) : 0);
+            
             signalQuality.put("timestamp", System.currentTimeMillis());
 
             result.success(signalQuality);
@@ -3581,11 +3997,13 @@ public class MainActivity extends FlutterActivity {
         switch (band) {
             case "L1": return "Primary GNSS frequency (1575.42 MHz)";
             case "L2": return "Secondary GNSS frequency (1227.60 MHz)";
-            case "L5": return "Enhanced safety-of-life frequency (1176.45 MHz)";
+            case "L5": return "Enhanced safety-of-life frequency (1176.45 MHz) - High Accuracy";
             case "E1": return "Galileo primary frequency";
             case "E5": return "Galileo enhanced frequency";
+            case "E5a": return "Galileo L5-equivalent frequency (1176.45 MHz)";
             case "B1": return "BeiDou primary frequency";
             case "B2": return "BeiDou secondary frequency";
+            case "B2a": return "BeiDou L5-equivalent frequency (1176.45 MHz)";
             case "G1": return "GLONASS primary frequency";
             case "G2": return "GLONASS secondary frequency";
             case "S": return "NavIC S-band (2492.028 MHz)";
@@ -3694,6 +4112,7 @@ public class MainActivity extends FlutterActivity {
             map.put("detectionTime", detectionTime);
             map.put("detectionCount", detectionCount);
             map.put("signalStrength", getSignalStrengthLevel());
+            map.put("isL5Band", frequencyBand != null && frequencyBand.contains("L5"));
             map.put("timestamp", System.currentTimeMillis());
             return map;
         }
@@ -3737,6 +4156,7 @@ public class MainActivity extends FlutterActivity {
         boolean hasL5Support = false;
         double confidence = 0.0;
         List<String> detectionMethods = new ArrayList<>();
+        List<String> verificationDetails = new ArrayList<>();
 
         Map<String, Object> toMap() {
             Map<String, Object> map = new HashMap<>();
@@ -3744,8 +4164,16 @@ public class MainActivity extends FlutterActivity {
             map.put("confidence", confidence);
             map.put("detectionMethods", detectionMethods);
             map.put("detectionMethodCount", detectionMethods.size());
+            map.put("verificationDetails", verificationDetails);
             return map;
         }
+    }
+    
+    private static class EnhancedChipsetL5Result {
+        boolean hasL5Support = false;
+        double confidence = 0.0;
+        String detectionMethod = "UNKNOWN";
+        List<String> verificationDetails = new ArrayList<>();
     }
 
     private static class EnhancedHardwareDetectionResult {

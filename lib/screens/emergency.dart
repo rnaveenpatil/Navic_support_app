@@ -31,6 +31,21 @@ class _EmergencyPageState extends State<EmergencyPage> {
   int _navicUsedInFix = 0;
   String _positioningMethod = "GPS";
   String _primarySystem = "GPS";
+  
+  // Emergency numbers
+  final Map<String, String> _emergencyNumbers = {
+    "Police": "100",
+    "Ambulance": "102",
+    "Fire": "101",
+    "Women Helpline": "1091",
+    "Child Helpline": "1098",
+    "Disaster Management": "108",
+    "Emergency (India)": "112",
+    "Road Accident": "1073",
+  };
+  
+  String _customEmergencyNumber = "";
+  String _selectedEmergencyType = "Emergency (India)";
 
   @override
   void initState() {
@@ -221,14 +236,146 @@ class _EmergencyPageState extends State<EmergencyPage> {
     );
   }
 
-  Future<void> callEmergencyNumber() async {
-    const number = "tel:112";
+  // FIXED: Emergency call function with multiple options
+  Future<void> _showEmergencyCallDialog() async {
+    // Get current location first
+    final enhancedPos = await _getEnhancedLocation();
+    if (enhancedPos == null) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.emergency, color: Colors.red),
+            SizedBox(width: 10),
+            Text("Emergency Call"),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "Select emergency service to call:",
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 20),
+              
+              // Emergency number list
+              ..._emergencyNumbers.entries.map((entry) {
+                return ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade100,
+                      shape: BoxShape.circle,
+                    ),
+                    child: _getEmergencyIcon(entry.key),
+                  ),
+                  title: Text(
+                    entry.key,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text("Number: ${entry.value}"),
+                  trailing: const Icon(Icons.call, color: Colors.red),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _callEmergencyNumber(entry.value, entry.key);
+                  },
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  tileColor: Colors.red.withOpacity(0.05),
+                );
+              }).toList(),
+              
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 16),
+              
+              // Custom number input
+              TextField(
+                decoration: InputDecoration(
+                  labelText: "Custom Emergency Number",
+                  hintText: "Enter phone number",
+                  prefixIcon: const Icon(Icons.phone),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                keyboardType: TextInputType.phone,
+                onChanged: (value) {
+                  setState(() {
+                    _customEmergencyNumber = value.trim();
+                  });
+                },
+              ),
+              
+              const SizedBox(height: 16),
+              
+              if (_customEmergencyNumber.isNotEmpty)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _callEmergencyNumber(_customEmergencyNumber, "Custom Number");
+                    },
+                    icon: const Icon(Icons.call),
+                    label: const Text("Call Custom Number"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Icon _getEmergencyIcon(String service) {
+    switch (service) {
+      case "Police":
+        return const Icon(Icons.local_police, color: Colors.blue, size: 18);
+      case "Ambulance":
+        return const Icon(Icons.local_hospital, color: Colors.red, size: 18);
+      case "Fire":
+        return const Icon(Icons.fire_truck, color: Colors.orange, size: 18);
+      case "Women Helpline":
+        return const Icon(Icons.female, color: Colors.purple, size: 18);
+      case "Child Helpline":
+        return const Icon(Icons.child_care, color: Colors.pink, size: 18);
+      case "Disaster Management":
+        return const Icon(Icons.warning, color: Colors.amber, size: 18);
+      default:
+        return const Icon(Icons.emergency, color: Colors.red, size: 18);
+    }
+  }
+
+  Future<void> _callEmergencyNumber(String number, String serviceName) async {
+    // Format number for dialing
+    String formattedNumber = number;
+    if (!formattedNumber.startsWith("tel:")) {
+      formattedNumber = "tel:$formattedNumber";
+    }
 
     try {
-      if (await canLaunchUrl(Uri.parse(number))) {
-        await launchUrl(Uri.parse(number));
+      if (await canLaunchUrl(Uri.parse(formattedNumber))) {
+        await launchUrl(Uri.parse(formattedNumber));
+        _showSuccess("Calling $serviceName...");
       } else {
-        _showError("Failed to make call");
+        _showError("Cannot make call to $serviceName");
       }
     } catch (e) {
       _showError("Call error: $e");
@@ -342,21 +489,269 @@ class _EmergencyPageState extends State<EmergencyPage> {
     _showSuccess("Location update sent!");
   }
 
-  Future<void> sendEmergencySMS() async {
+ // FIXED: Emergency SMS function - Optimized for screen
+Future<void> _showEmergencySMSDialog() async {
+  // Get location first
+  final enhancedPos = await _getEnhancedLocation();
+  if (enhancedPos == null) return;
+
+  final screenHeight = MediaQuery.of(context).size.height;
+  final isSmallScreen = screenHeight < 600;
+  final isMediumScreen = screenHeight < 800;
+
+  String? selectedService = await showDialog<String>(
+    context: context,
+    builder: (context) => Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: screenHeight * 0.8, // Dynamic height based on screen
+          maxWidth: 400, // Maximum width for larger screens
+        ),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade100,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.sms, color: Colors.blue, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        "Send Emergency SMS",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Instruction
+                Text(
+                  "Select emergency service:",
+                  style: TextStyle(
+                    fontSize: isSmallScreen ? 14 : 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Emergency service selection - Better for small screens
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedEmergencyType,
+                      isExpanded: true,
+                      icon: const Icon(Icons.arrow_drop_down, color: Colors.blue),
+                      iconSize: 28,
+                      style: TextStyle(
+                        fontSize: isSmallScreen ? 14 : 16,
+                        color: Colors.black87,
+                      ),
+                      items: _emergencyNumbers.entries.map((entry) {
+                        return DropdownMenuItem<String>(
+                          value: entry.key,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Row(
+                              children: [
+                                _getEmergencyIcon(entry.key),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        entry.key,
+                                        style: const TextStyle(fontWeight: FontWeight.w500),
+                                      ),
+                                      Text(
+                                        entry.value,
+                                        style: TextStyle(
+                                          fontSize: isSmallScreen ? 11 : 12,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (String? newValue) {
+                        if (newValue != null) {
+                          setState(() {
+                            _selectedEmergencyType = newValue;
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Preview section
+                Text(
+                  "Message Preview:",
+                  style: TextStyle(
+                    fontSize: isSmallScreen ? 13 : 15,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                
+                const SizedBox(height: 8),
+                
+                // Scrollable preview container
+                Container(
+                  height: isSmallScreen ? 120 : 150,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Text(
+                      _createEmergencyMessage(enhancedPos, _selectedEmergencyType),
+                      style: TextStyle(
+                        fontSize: isSmallScreen ? 11 : 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 8),
+                
+                // Character count warning
+                Text(
+                  "Message will be sent to your default SMS app",
+                  style: TextStyle(
+                    fontSize: isSmallScreen ? 10 : 11,
+                    color: Colors.grey.shade600,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Action buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.symmetric(vertical: isSmallScreen ? 12 : 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          "CANCEL",
+                          style: TextStyle(
+                            fontSize: isSmallScreen ? 14 : 15,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(width: 12),
+                    
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => Navigator.pop(context, _selectedEmergencyType),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(vertical: isSmallScreen ? 12 : 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 2,
+                        ),
+                        icon: Icon(
+                          Icons.send,
+                          size: isSmallScreen ? 18 : 20,
+                        ),
+                        label: Text(
+                          "SEND SMS",
+                          style: TextStyle(
+                            fontSize: isSmallScreen ? 14 : 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  if (selectedService != null && mounted) {
+    await sendEmergencySMS(selectedService);
+  }
+}
+
+  Future<void> sendEmergencySMS([String? serviceName]) async {
     final enhancedPos = await _getEnhancedLocation();
     if (enhancedPos == null) return;
 
-    String message = _createEmergencyMessage(enhancedPos, "EMERGENCY");
-    final smsUrl = Uri.parse("sms:?body=${Uri.encodeComponent(message)}");
+    String actualService = serviceName ?? _selectedEmergencyType;
+    String message = _createEmergencyMessage(enhancedPos, actualService);
+    
+    // FIXED: Proper SMS URL encoding
+    String smsUrl = "sms:?body=${Uri.encodeComponent(message)}";
 
     try {
-      if (await canLaunchUrl(smsUrl)) {
-        await launchUrl(smsUrl);
+      if (await canLaunchUrl(Uri.parse(smsUrl))) {
+        await launchUrl(Uri.parse(smsUrl));
+        _showSuccess("Opening SMS app...");
       } else {
-        _showError("Failed to open SMS app");
+        // Fallback: Share via other apps
+        await Share.share(message);
+        _showSuccess("Shared via available apps");
       }
     } catch (e) {
       _showError("SMS error: $e");
+      // Final fallback
+      await Share.share(message);
     }
   }
 
@@ -414,7 +809,7 @@ ${type == "LIVE LOCATION TRACKING" ? "🔄 Live tracking active - location updat
     return _createLocationMessage(position, "LIVE LOCATION TRACKING");
   }
 
-  String _createEmergencyMessage(dynamic position, String type) {
+  String _createEmergencyMessage(dynamic position, String serviceType) {
     final lat = _getLatitude(position);
     final lng = _getLongitude(position);
     
@@ -423,26 +818,38 @@ ${type == "LIVE LOCATION TRACKING" ? "🔄 Live tracking active - location updat
 
     String l5Info = _hasL5Band && _l5Confidence > 0.5
         ? "• L5 Band: Available\n"
-        : "• L5 Band: Not available\n";
+        : "";
 
     String satelliteInfo = _totalSatelliteCount > 0
         ? "• Satellites: $_totalSatelliteCount total, $_navicSatelliteCount NavIC\n"
         : "";
 
-    return """EMERGENCY! Need assistance immediately!
+    String emergencyNumber = _emergencyNumbers[serviceType] ?? "112";
 
-My current location:
+    return """🚨 EMERGENCY: $serviceType 🚨
+📞 Emergency Number: $emergencyNumber
+
+🆘  NEED IMMEDIATE ASSISTANCE!
+
+📍 **My Current Location:**
 • Latitude: ${lat.toStringAsFixed(6)}
 • Longitude: ${lng.toStringAsFixed(6)}
 • Accuracy: ${_getAccuracy(position).toStringAsFixed(1)} meters
-• Source: $_locationSource
+• Positioning: $_locationSource
 $l5Info$satelliteInfo
-Google Maps: $googleMaps
-OpenStreetMap: $openStreetMap
 
-Timestamp: ${DateTime.now().toString().split('.').first}
+🗺️ **Quick Links:**
+• Google Maps: $googleMaps
+• OpenStreetMap: $openStreetMap
 
-This is an automated emergency message.""";
+📱 **Device Info:**
+$_chipsetVendor $_chipsetModel
+
+⏰ Timestamp: ${DateTime.now().toString().split('.').first}
+
+This is an automated emergency message sent via NavIC  App.
+
+Please dispatch help immediately!""";
   }
 
   Color _getStatusColor() {
@@ -473,6 +880,12 @@ This is an automated emergency message.""";
         elevation: 2,
         foregroundColor: Colors.white,
         actions: [
+          // Quick emergency call button in app bar
+          IconButton(
+            icon: const Icon(Icons.emergency, color: Colors.white),
+            onPressed: _showEmergencyCallDialog,
+            tooltip: 'Emergency Call',
+          ),
           IconButton(
             icon: Icon(_isLoading ? Icons.refresh : Icons.refresh_outlined),
             onPressed: _isLoading ? null : () async {
@@ -521,14 +934,14 @@ This is an automated emergency message.""";
                 physics: const BouncingScrollPhysics(),
                 child: Column(
                   children: [
-                    // 1️⃣ Call Emergency Number
+                    // 1️⃣ Call Emergency Number (Now with dialog)
                     _buildEmergencyButton(
                       icon: Icons.emergency,
-                      title: "CALL EMERGENCY NUMBER",
-                      subtitle: "Direct call to emergency services",
+                      title: "CALL EMERGENCY SERVICES",
+                      subtitle: "Police, Ambulance, Fire, and more",
                       color: Colors.red.shade700,
                       iconColor: Colors.white,
-                      onPressed: callEmergencyNumber,
+                      onPressed: _showEmergencyCallDialog,
                     ),
 
                     const SizedBox(height: 16),
@@ -573,17 +986,74 @@ This is an automated emergency message.""";
                         ],
                       ),
 
-                    // 5️⃣ Send Emergency SMS
+                    // 5️⃣ Send Emergency SMS (Now with dialog)
                     _buildEmergencyButton(
                       icon: Icons.sms,
                       title: "SEND EMERGENCY SMS",
                       subtitle: "Send location via SMS to contacts",
                       color: Colors.orange.shade700,
                       iconColor: Colors.white,
-                      onPressed: sendEmergencySMS,
+                      onPressed: _showEmergencySMSDialog,
                     ),
 
-                    const SizedBox(height: 32),
+                    // 6️⃣ Quick Emergency Info
+                    Container(
+                      margin: const EdgeInsets.only(top: 24, bottom: 32),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.8),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.info, color: Colors.red, size: 18),
+                              SizedBox(width: 8),
+                              Text(
+                                "Emergency Numbers (India):",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _emergencyNumbers.entries.map((entry) {
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: Colors.red.shade200),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _getEmergencyIcon(entry.key),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      "${entry.key}: ",
+                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                                    ),
+                                    Text(
+                                      entry.value,
+                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),

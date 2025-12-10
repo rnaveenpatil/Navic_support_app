@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
 import 'package:navic_ss/screens/home_screen.dart';
 
 void main() {
@@ -17,11 +18,10 @@ void main() {
 class Navic extends StatelessWidget {
   const Navic({super.key});
 
- 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Enhanced NavIC Detector',
+      title: 'NavIC',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         // Color scheme
@@ -44,8 +44,6 @@ class Navic extends StatelessWidget {
         
         // Scaffold background
         scaffoldBackgroundColor: Colors.grey.shade50,
-        
-        // REMOVED CardTheme completely
         
         // Elevated button theme
         elevatedButtonTheme: ElevatedButtonThemeData(
@@ -72,7 +70,112 @@ class Navic extends StatelessWidget {
         // Use Material 3 design
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+// Splash Screen with Video Animation
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  late VideoPlayerController _controller;
+  bool _isVideoInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeVideo();
+  }
+
+  Future<void> _initializeVideo() async {
+    try {
+      // ==================== IMPORTANT ====================
+      // Change 'splash_video.mp4' to your actual video file name
+      // Example: 'assets/splash.mp4', 'assets/intro_video.mp4', etc.
+      // ===================================================
+      _controller = VideoPlayerController.asset('assets/navic_animetion.mp4');
+      
+      await _controller.initialize().then((_) {
+        setState(() {
+          _isVideoInitialized = true;
+        });
+        
+        // Play video
+        _controller.play();
+        
+        // Listen for video completion
+        _controller.addListener(() {
+          if (_controller.value.position >= _controller.value.duration) {
+            _navigateToHome();
+          }
+        });
+        
+        // Auto navigate after video duration + buffer time
+        Future.delayed(_controller.value.duration + const Duration(seconds: 1), _navigateToHome);
+      }).catchError((error) {
+        print('Video loading error: $error');
+        _navigateToHome();
+      });
+    } catch (e) {
+      print('Error initializing video: $e');
+      _navigateToHome();
+    }
+  }
+
+  void _navigateToHome() {
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1B5E20),
+      body: Center(
+        child: _isVideoInitialized
+            ? AspectRatio(
+                aspectRatio: _controller.value.aspectRatio,
+                child: VideoPlayer(_controller),
+              )
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.satellite_alt,
+                    size: 100,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(height: 20),
+                  const CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'NavIC',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 }
