@@ -1,2 +1,0 @@
-/home/patil/Navic_support_app/build/.cxx/debug/6x3j6d5v/x86_64/CMakeFiles/edit_cache.dir
-/home/patil/Navic_support_app/build/.cxx/debug/6x3j6d5v/x86_64/CMakeFiles/rebuild_cache.dir
