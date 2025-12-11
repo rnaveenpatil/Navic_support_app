@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -6,7 +8,6 @@ import 'package:navic_ss/screens/emergency.dart';
 import 'package:navic_ss/models/satellite_data_model.dart';
 import 'package:navic_ss/models/gnss_satellite.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:navic_ss/screens/animation.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -67,6 +68,15 @@ class _HomeScreenState extends State<HomeScreen> {
   // New state for bottom panel visibility
   bool _isBottomPanelVisible = true;
 
+  // Permission handling state
+  bool _isCheckingPermission = false;
+  bool _permissionGranted = false;
+  bool _hasRequestedPermission = false;
+
+  // New state for location acquisition type
+  bool _isUsingNavic = false;
+  String _acquisitionFlow = "GPS";
+
   Map<String, bool> _selectedLayers = {
     'OpenStreetMap Standard': true,
     'ESRI Satellite View': false,
@@ -93,14 +103,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _initializeApp() async {
     try {
+      print("🚀 Initializing app...");
+      
+      // Initialize service first
       await _locationService.initializeService();
       
-      final hasPermission = await _checkAndRequestPermission();
+      // Check and request permission only once
+      _permissionGranted = await _checkAndRequestPermissionOnce();
       
-      if (hasPermission) {
-        await _checkNavicHardwareSupport();
-        await _acquireCurrentLocation();
-        await _startRealTimeMonitoring();
+      if (_permissionGranted) {
+        // Use the new location service workflow:
+        // 1. Gets GPS location first
+        // 2. Checks hardware capabilities
+        // 3. If hardware supports NavIC, tries to get NavIC-enhanced location
+        // 4. Falls back to GPS if NavIC fails
+        await _acquireInitialLocationWithNavICFlow();
+        
+        // Start monitoring in background
+        _startRealTimeMonitoring();
       } else {
         print("⚠️ No location permission granted");
         _showPermissionDeniedDialog();
@@ -114,154 +134,120 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<bool> _checkAndRequestPermission() async {
+  /// NEW: Uses the proper flow from location_service.dart
+  Future<void> _acquireInitialLocationWithNavICFlow() async {
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        print("⚠️ Location services disabled");
-        
-        bool? shouldEnable = await _showEnableLocationDialog();
-        if (shouldEnable ?? false) {
-          await Geolocator.openLocationSettings();
-        }
-        return false;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
+      print("\n🎯 ========= STARTING NAVIC FLOW FROM HOME SCREEN ==========");
       
-      print("📍 Current permission status: $permission");
+      if (!_permissionGranted) {
+        print("❌ No location permission, skipping acquisition");
+        return;
+      }
 
-      if (permission == LocationPermission.denied) {
-        print("📍 Permission denied, requesting...");
-        permission = await Geolocator.requestPermission();
+      // Use the new location service method that implements the proper flow
+      final position = await _locationService.getLocationWithNavICFlow();
+      
+      if (position != null && _isValidCoordinate(position.latitude, position.longitude)) {
+        print("✅ Location acquired successfully using NavIC flow");
         
-        if (permission != LocationPermission.whileInUse && 
-            permission != LocationPermission.always) {
-          print("❌ Location permission not granted: $permission");
-          return false;
-        }
+        // Update state from the position returned by location service
+        _isUsingNavic = position.isNavicEnhanced;
+        _isHardwareChecked = _locationService.hasHardwareBeenChecked;
+        _acquisitionFlow = _isUsingNavic ? "NAVIC" : "GPS";
+        
+        _updateLocationState(position);
+        _centerMapOnPosition(position);
+        _logLocationDetails(position);
+        
+        // Now update hardware info from location service
+        await _updateHardwareInfoFromService();
+      } else {
+        print("❌ Location acquisition failed");
+        await _tryFallbackLocationAcquisition();
       }
-
-      if (permission == LocationPermission.deniedForever) {
-        print("❌ Location permission permanently denied");
-        await _showOpenSettingsDialog();
-        return false;
-      }
-
-      print("✅ Location permission granted: $permission");
-      return permission == LocationPermission.whileInUse || 
-             permission == LocationPermission.always;
+    } on TimeoutException catch (e) {
+      print("⏰ Location acquisition timeout: $e");
+      await _tryFallbackLocationAcquisition();
     } catch (e) {
-      print("Permission error: $e");
-      return false;
+      print("❌ Error in location acquisition: $e");
+      
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Failed to get location: ${e.toString()}"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 
-  Future<bool?> _showEnableLocationDialog() async {
-    return await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Location Services Disabled'),
-          content: const Text(
-            'Location services are required for this app to work properly. '
-            'Please enable location services in your device settings.',
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop(false);
-              },
-            ),
-            TextButton(
-              child: const Text('Enable'),
-              onPressed: () {
-                Navigator.of(context).pop(true);
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _showOpenSettingsDialog() async {
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Location Permission Required'),
-          content: const Text(
-            'Location permission is required for this app to work. '
-            'Please enable it in the app settings.',
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-            TextButton(
-              child: const Text('Open Settings'),
-              onPressed: () {
-                Geolocator.openAppSettings();
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showPermissionDeniedDialog() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: const Text('Permission Required'),
-            content: const Text(
-              'Location permission is required to use this app. '
-              'Please grant location permission in settings.',
-            ),
-            actions: <Widget>[
-              TextButton(
-                child: const Text('Cancel'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-              ),
-              TextButton(
-                child: const Text('Open Settings'),
-                onPressed: () {
-                  Geolocator.openAppSettings();
-                  Navigator.of(context).pop();
-                },
-              ),
-            ],
-          );
-        },
-      );
-    });
-  }
-
-  Future<void> _checkNavicHardwareSupport() async {
+  /// Refresh location - follows same workflow
+  Future<void> _refreshLocation() async {
+    if (_isLoading) return;
+    
+    setState(() => _isLoading = true);
+    
     try {
-      print("🔍 Checking NavIC hardware support...");
-      await _locationService.performHardwareDetection();
+      // Check permission quickly first
+      if (!_permissionGranted) {
+        _permissionGranted = await _checkAndRequestPermissionOnce();
+        if (!_permissionGranted) {
+          print("❌ No location permission for refresh");
+          return;
+        }
+      }
+
+      // Use the new NavIC flow
+      final position = await _locationService.getLocationWithNavICFlow();
       
-      // Check if both L5 and S bands are present for NavIC support
-      final bool hasL5AndSBands = _locationService.hasL5Band && _locationService.hasSBand;
+      if (position != null && _isValidCoordinate(position.latitude, position.longitude)) {
+        // Update state from position
+        _isUsingNavic = position.isNavicEnhanced;
+        _acquisitionFlow = _isUsingNavic ? "NAVIC" : "GPS";
+        
+        _updateLocationState(position);
+        _centerMapOnPosition(position);
+        _logLocationDetails(position);
+        
+        // Update hardware info
+        await _updateHardwareInfoFromService();
+        
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_isUsingNavic ? 
+              "Location refreshed using NavIC" : 
+              "Location refreshed using GPS"),
+            backgroundColor: _isUsingNavic ? Colors.green : Colors.blue,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print("❌ Error refreshing location: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Refresh failed: ${e.toString()}"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  /// Update hardware info from location service
+  Future<void> _updateHardwareInfoFromService() async {
+    try {
+      print("🔄 Updating hardware info from location service...");
       
       setState(() {
-        _isNavicSupported = _locationService.isNavicSupported && hasL5AndSBands;
-        _isNavicActive = _locationService.isNavicActive && hasL5AndSBands;
+        _isNavicSupported = _locationService.isNavicSupported;
+        _isNavicActive = _locationService.isNavicActive;
         _hasL5Band = _locationService.hasL5Band;
         _hasL1Band = _locationService.hasL1Band;
         _hasL2Band = _locationService.hasL2Band;
@@ -277,7 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _totalSatelliteCount = _locationService.totalSatelliteCount;
         _navicUsedInFix = _locationService.navicUsedInFix;
         _positioningMethod = _locationService.positioningMethod;
-        _primarySystem = _determinePrimarySystem();
+        _primarySystem = _locationService.primarySystem;
         _l5BandInfo = _locationService.l5BandInfo;
         
         _allSatellites = _locationService.allSatellites;
@@ -294,25 +280,299 @@ class _HomeScreenState extends State<HomeScreen> {
         _bandAverageSignals = _locationService.bandAverageSignals;
 
         _updateHardwareMessage();
-        _isHardwareChecked = true;
+        _isHardwareChecked = _locationService.hasHardwareBeenChecked;
       });
 
-      print("✅ Hardware check completed:");
-      print("  ✅ NavIC Supported: $_isNavicSupported (requires L5 and S bands)");
+      print("✅ Hardware info updated from service");
+      print("  ✅ Using NavIC: $_isUsingNavic");
+      print("  ✅ Acquisition Flow: $_acquisitionFlow");
+      print("  ✅ NavIC Supported: $_isNavicSupported");
       print("  ✅ NavIC Active: $_isNavicActive");
       print("  ✅ L5 Band: $_hasL5Band (${(_l5Confidence * 100).toStringAsFixed(1)}%)");
-      print("  ✅ L1 Band: $_hasL1Band");
-      print("  ✅ L2 Band: $_hasL2Band");
       print("  ✅ S Band: $_hasSBand");
-      print("  ✅ Chipset: $_chipsetVendor $_chipsetModel");
-      print("  ✅ Available Bands: ${_availableBands.keys.join(', ')}");
-      print("  ✅ Active Bands: ${_activeBands.join(', ')}");
-      print("  ✅ Supported Bands: ${_supportedBands.join(', ')}");
-      print("  ✅ Primary System: $_primarySystem");
+      print("  ✅ Should Use NavIC: ${_locationService.shouldUseNavic}");
 
     } catch (e) {
-      print("❌ Error checking NavIC hardware support: $e");
-      _setHardwareErrorState();
+      print("❌ Error updating hardware info: $e");
+    }
+  }
+
+  Future<bool> _checkAndRequestPermissionOnce() async {
+    if (_isCheckingPermission || _hasRequestedPermission) {
+      print("ℹ️ Permission check already in progress or completed");
+      return _permissionGranted;
+    }
+
+    setState(() {
+      _isCheckingPermission = true;
+    });
+
+    try {
+      print("📍 Starting permission check...");
+      
+      // Check if location services are enabled
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print("⚠️ Location services disabled");
+        
+        // Show dialog but don't wait for it to complete
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showEnableLocationDialog();
+        });
+        return false;
+      }
+
+      // Check current permission status
+      LocationPermission permission = await Geolocator.checkPermission();
+      print("📍 Current permission status: $permission");
+
+      // Handle different permission states
+      switch (permission) {
+        case LocationPermission.whileInUse:
+        case LocationPermission.always:
+          print("✅ Permission already granted");
+          _hasRequestedPermission = true;
+          return true;
+          
+        case LocationPermission.denied:
+          print("📍 Permission denied, requesting...");
+          // Request permission using the new Android 13+ in-app dialog
+          permission = await Geolocator.requestPermission();
+          _hasRequestedPermission = true;
+          
+          print("📍 Permission request result: $permission");
+          
+          if (permission == LocationPermission.whileInUse || 
+              permission == LocationPermission.always) {
+            print("✅ Permission granted after request");
+            return true;
+          } else {
+            print("❌ Permission not granted after request: $permission");
+            return false;
+          }
+          
+        case LocationPermission.deniedForever:
+          print("❌ Permission denied forever");
+          // For Android 13+, show explanation dialog first
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showPermissionDeniedForeverDialog();
+          });
+          _hasRequestedPermission = true;
+          return false;
+          
+        case LocationPermission.unableToDetermine:
+          print("⚠️ Unable to determine permission");
+          return false;
+      }
+    } catch (e) {
+      print("❌ Permission error: $e");
+      return false;
+    } finally {
+      setState(() {
+        _isCheckingPermission = false;
+      });
+    }
+  }
+
+  Future<void> _showEnableLocationDialog() async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Location Services Disabled'),
+          content: const Text(
+            'Location services are required for this app to work properly. '
+            'Please enable location services in your device settings.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: const Text('Enable'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                Geolocator.openLocationSettings();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showPermissionDeniedForeverDialog() async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Location Permission Required'),
+          content: const Text(
+            'Location permission is required for this app to work. '
+            'Please enable it in the app settings. '
+            'On Android 13+, you can grant permission directly from this app.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: const Text('Grant Permission'),
+              onPressed: () async {
+                Navigator.of(context).pop();
+                // Try requesting permission again
+                final permission = await Geolocator.requestPermission();
+                if (permission == LocationPermission.whileInUse || 
+                    permission == LocationPermission.always) {
+                  setState(() {
+                    _permissionGranted = true;
+                  });
+                  // Retry location acquisition
+                  await _acquireInitialLocationWithNavICFlow();
+                } else {
+                  // Fallback to app settings
+                  Geolocator.openAppSettings();
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showPermissionDeniedDialog() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Permission Required'),
+            content: const Text(
+              'Location permission is required to use this app. '
+              'Please grant location permission.',
+            ),
+            actions: <Widget>[
+              TextButton(
+                child: const Text('Cancel'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+              ),
+              TextButton(
+                child: const Text('Grant Permission'),
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  // Request permission directly
+                  final permission = await Geolocator.requestPermission();
+                  if (permission == LocationPermission.whileInUse || 
+                      permission == LocationPermission.always) {
+                    setState(() {
+                      _permissionGranted = true;
+                    });
+                    // Retry location acquisition
+                    await _acquireInitialLocationWithNavICFlow();
+                  }
+                },
+              ),
+            ],
+          );
+        },
+      );
+    });
+  }
+
+  Future<void> _tryFallbackLocationAcquisition() async {
+    try {
+      print("🔄 Trying fallback location acquisition...");
+      
+      // Quick check if location services are enabled
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print("❌ Location services are disabled");
+        return;
+      }
+      
+      // Try with lower accuracy and shorter timeout
+      print("📍 Trying with lower accuracy...");
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 10),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (_isValidCoordinate(position.latitude, position.longitude)) {
+        print("✅ Fallback location acquired");
+        final enhancedPosition = EnhancedPosition(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          accuracy: position.accuracy,
+          altitude: position.altitude,
+          speed: position.speed,
+          heading: position.heading,
+          timestamp: position.timestamp,
+          isNavicEnhanced: false,
+          confidenceScore: 0.7,
+          locationSource: "GPS",
+          detectionReason: "Fallback GPS positioning",
+          navicSatellites: 0,
+          totalSatellites: 0,
+          navicUsedInFix: 0,
+          hasL5Band: false,
+          positioningMethod: "GPS_FALLBACK",
+          satelliteInfo: [],
+          systemStats: {},
+          primarySystem: "GPS",
+          chipsetType: "Unknown",
+          chipsetVendor: "Unknown",
+          chipsetModel: "Unknown",
+          chipsetConfidence: 0.0,
+          l5Confidence: 0.0,
+          verificationMethods: [],
+          acquisitionTimeMs: 0.0,
+          satelliteDetails: [],
+        );
+        
+        _updateLocationState(enhancedPosition);
+        _centerMapOnPosition(enhancedPosition);
+        
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Using GPS for positioning"),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } on TimeoutException {
+      print("⏰ Fallback location acquisition timeout");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Location acquisition timed out"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      print("❌ Fallback location acquisition failed: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Location unavailable: ${e.toString()}"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -389,8 +649,6 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       
       print("✅ Satellite data updated: $_totalSatelliteCount total, $_navicSatelliteCount NavIC ($_navicUsedInFix in fix)");
-      print("📡 Active bands: ${_activeBands.join(', ')}");
-      print("🎯 Primary system: $_primarySystem");
     } catch (e) {
       print("❌ Error updating satellite data: $e");
     }
@@ -406,12 +664,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final bandsStr = bands.isNotEmpty ? 'Available bands: ${bands.join(', ')}. ' : '';
     
     // Check if both L5 and S bands are present for NavIC support
-    final bool hasL5AndSBands = _hasL5Band && _hasSBand;
+    final bool hasNavicBands = _hasL5Band && _hasSBand;
     
-    if (!_isNavicSupported && !hasL5AndSBands) {
+    if (!_isNavicSupported && !hasNavicBands) {
       _hardwareMessage = "$bandsStr Device does not have both L5 and S bands required for NavIC. Using standard GPS.";
       _hardwareStatus = "Limited Hardware";
-    } else if (_isNavicSupported && hasL5AndSBands) {
+    } else if (_isNavicSupported && hasNavicBands) {
       _hardwareMessage = "$bandsStr Device has L5 and S bands. NavIC positioning ready!";
       _hardwareStatus = "NavIC Ready";
     } else if (_hasL5Band && _hasSBand) {
@@ -463,116 +721,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _supportedBands = [];
       _bandSatelliteCounts = {};
       _bandAverageSignals = {};
+      _isUsingNavic = false;
+      _acquisitionFlow = "GPS";
     });
-  }
-
-  Future<void> _acquireCurrentLocation() async {
-    try {
-      print("🔍 Attempting to acquire current location...");
-      final position = await _locationService.getCurrentLocation();
-      
-      if (position != null && _isValidCoordinate(position.latitude, position.longitude)) {
-        print("✅ Location acquired successfully");
-        _updateLocationState(position);
-        _centerMapOnPosition(position);
-        _logLocationDetails(position);
-      } else {
-        print("❌ Location service returned null or invalid coordinates");
-        
-        await _tryFallbackLocationAcquisition();
-      }
-    } catch (e) {
-      print("❌ Error acquiring location: $e");
-      
-      if (!mounted) return;
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to get location: ${e.toString()}"),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  Future<void> _tryFallbackLocationAcquisition() async {
-    try {
-      print("🔄 Trying fallback location acquisition...");
-      
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        print("❌ Location services are disabled");
-        return;
-      }
-      
-      LocationPermission permission = await Geolocator.checkPermission();
-      
-      if (permission != LocationPermission.whileInUse && 
-          permission != LocationPermission.always) {
-        print("❌ No location permission for fallback");
-        return;
-      }
-      
-      print("📍 Trying with lower accuracy...");
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: const Duration(seconds: 10),
-      );
-      
-      if (_isValidCoordinate(position.latitude, position.longitude)) {
-        print("✅ Fallback location acquired");
-        final enhancedPosition = EnhancedPosition(
-          latitude: position.latitude,
-          longitude: position.longitude,
-          accuracy: position.accuracy,
-          altitude: position.altitude,
-          speed: position.speed,
-          heading: position.heading,
-          timestamp: position.timestamp,
-          isNavicEnhanced: false,
-          confidenceScore: 0.7,
-          locationSource: "GPS",
-          detectionReason: "Fallback GPS positioning",
-          navicSatellites: 0,
-          totalSatellites: 0,
-          navicUsedInFix: 0,
-          hasL5Band: false,
-          positioningMethod: "GPS_FALLBACK",
-          satelliteInfo: [],
-          systemStats: {},
-          primarySystem: "GPS",
-          chipsetType: "Unknown",
-          chipsetVendor: "Unknown",
-          chipsetModel: "Unknown",
-          chipsetConfidence: 0.0,
-          l5Confidence: 0.0,
-          verificationMethods: [],
-          acquisitionTimeMs: 0.0,
-          satelliteDetails: [],
-        );
-        
-        _updateLocationState(enhancedPosition);
-        _centerMapOnPosition(enhancedPosition);
-        
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("NavIC is unavailable, using GPS for positioning"),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } catch (e) {
-      print("❌ Fallback location acquisition also failed: $e");
-      
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Location unavailable: ${e.toString()}"),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
   }
 
   void _updateLocationState(EnhancedPosition position) {
@@ -598,6 +749,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _chipsetVendor = _locationService.chipsetVendor;
       _chipsetModel = _locationService.chipsetModel;
       _chipsetConfidence = _locationService.chipsetConfidence;
+      _isUsingNavic = position.isNavicEnhanced;
+      _acquisitionFlow = _isUsingNavic ? "NAVIC" : "GPS";
       
       _allSatellites = _locationService.allSatellites;
       _satelliteDetails = _locationService.satelliteDetails;
@@ -621,7 +774,7 @@ class _HomeScreenState extends State<HomeScreen> {
     print("\n📍 === LOCATION DETAILS ===");
     print("📍 Coordinates: ${position.latitude}, ${position.longitude}");
     print("🎯 Accuracy: ${position.accuracy?.toStringAsFixed(2)} meters");
-    print("🛰️ Source: $_locationSource");
+    print("🛰️ Source: ${position.locationSource}");
     print("🎯 Primary System: $_primarySystem");
     print("💪 Confidence: ${(position.confidenceScore * 100).toStringAsFixed(1)}%");
     print("🏭 Vendor: $_chipsetVendor");
@@ -638,6 +791,8 @@ class _HomeScreenState extends State<HomeScreen> {
     print("🛰️ Total Satellites: $_totalSatelliteCount");
     print("📊 Visible Satellites: ${_satelliteDetails.length}");
     print("📡 Active Bands: ${_activeBands.join(', ')}");
+    print("📱 Using NavIC: $_isUsingNavic");
+    print("📱 Acquisition Flow: $_acquisitionFlow");
     print("===========================\n");
   }
 
@@ -652,7 +807,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _updateLocationSource() {
-    if (_isNavicSupported && _isNavicActive) {
+    if (_isUsingNavic && _isNavicSupported && _isNavicActive) {
       _locationSource = "NAVIC";
     } else {
       // Use the primary system determined from satellite data
@@ -661,7 +816,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _updateLocationQuality(EnhancedPosition pos) {
-    final isUsingNavic = _isNavicSupported && _isNavicActive;
+    final isUsingNavic = _isUsingNavic && _isNavicSupported && _isNavicActive;
     final isUsingL5 = _activeBands.contains('L5');
     final isUsingL1 = _activeBands.contains('L1');
     final isUsingL2 = _activeBands.contains('L2');
@@ -694,22 +849,6 @@ class _HomeScreenState extends State<HomeScreen> {
         "${bandInfo}NavIC Low" : 
         "${bandInfo}$_primarySystem Low";
     }
-  }
-
-  Future<void> _refreshLocation() async {
-    final hasPermission = await _checkAndRequestPermission();
-    if (!hasPermission) {
-      print("❌ No location permission for refresh");
-      return;
-    }
-
-    setState(() => _isLoading = true);
-    await Future.wait([
-      _checkNavicHardwareSupport(),
-      _acquireCurrentLocation(),
-      _updateSatelliteData(),
-    ]);
-    setState(() => _isLoading = false);
   }
 
   void _toggleLayerSelection() => setState(() => _showLayerSelection = !_showLayerSelection);
@@ -783,7 +922,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLocationMarker() {
-    final isNavic = _locationSource == "NAVIC";
+    final isNavic = _isUsingNavic && _isNavicSupported && _isNavicActive;
     final isL5 = _activeBands.contains('L5');
     final isL1 = _activeBands.contains('L1');
     final isL2 = _activeBands.contains('L2');
@@ -858,6 +997,23 @@ class _HomeScreenState extends State<HomeScreen> {
                     Icons.speed,
                     color: Colors.green,
                     size: 12,
+                  ),
+                ),
+              ),
+            if (isNavic)
+              Positioned(
+                bottom: 0,
+                left: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.satellite_alt,
+                    color: Colors.green,
+                    size: 10,
                   ),
                 ),
               ),
@@ -1652,7 +1808,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Create a string for the AppBar subtitle with chipset and band info
+    // Create a string for the AppBar subtitle
     String appBarSubtitle = "";
     
     if (_chipsetVendor != "Unknown") {
@@ -1675,6 +1831,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_hasSBand) {
         appBarSubtitle += " • S Band";
       }
+      
+      // Add current location source
+      appBarSubtitle += " • Using ${_isUsingNavic ? 'NavIC' : 'GPS'}";
     }
 
     return Scaffold(
@@ -1693,7 +1852,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (appBarSubtitle.isNotEmpty)
               Container(
                 constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width - 120, // Adjust for action buttons
+                  maxWidth: MediaQuery.of(context).size.width - 120,
                 ),
                 child: Text(
                   appBarSubtitle,
@@ -1707,9 +1866,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           ],
         ),
-        backgroundColor: Colors.green.shade700,
+        backgroundColor: _isUsingNavic ? Colors.green.shade700 : Colors.blue.shade700,
         elevation: 2,
         actions: [
+          // Show NavIC/GPS status icon
+         
           IconButton(
             icon: Icon(_isLoading ? Icons.refresh : Icons.refresh_outlined),
             onPressed: _isLoading ? null : _refreshLocation,
@@ -1739,8 +1900,11 @@ class _HomeScreenState extends State<HomeScreen> {
             IconButton(
               icon: const Icon(Icons.emergency_share_sharp),
               iconSize: 24,
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) =>EmergencyPage(),),
-            ),),
+              onPressed: () => Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (context) => const EmergencyPage()),
+              ),
+            ),
         ],
       ),
       body: Stack(
@@ -1792,9 +1956,12 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_currentPosition != null)
             FloatingActionButton(
               onPressed: _refreshLocation,
-              backgroundColor: Colors.blue,
-              child: const Icon(Icons.my_location, color: Colors.white),
-              tooltip: 'My Location',
+              backgroundColor: _isUsingNavic ? Colors.green : Colors.blue,
+              child: Icon(
+                _isUsingNavic ? Icons.satellite_alt : Icons.my_location, 
+                color: Colors.white
+              ),
+              tooltip: _isUsingNavic ? 'NavIC Location' : 'GPS Location',
             ),
         ],
       ),
@@ -1809,7 +1976,9 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                _isUsingNavic ? Colors.green : Colors.blue
+              ),
               strokeWidth: 3,
             ),
             const SizedBox(height: 20),
@@ -1823,34 +1992,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              _locationSource == "NAVIC" ? 
-                (_hasL5Band && _hasSBand ? "Using NavIC with L5 & S" : "Using NavIC") : 
-                (_hasL5Band ? "Using $_primarySystem with L5" : "Using $_primarySystem"),
+              _acquisitionFlow == "NAVIC" ? 
+                "Using NavIC positioning" : 
+                "Using GPS positioning",
               style: TextStyle(
                 color: Colors.white70,
                 fontSize: 14,
               ),
             ),
-            if (_chipsetVendor != "Unknown") ...[
-              const SizedBox(height: 4),
-              Text(
-                "Chipset: $_chipsetVendor $_chipsetModel | L5: ${_hasL5Band ? 'Yes' : 'No'} | S: ${_hasSBand ? 'Yes' : 'No'}",
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-            if (_activeBands.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                "Active Bands: ${_activeBands.join(', ')}",
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -2006,13 +2155,13 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            _hasL5Band && _hasSBand ? Icons.satellite_alt : (_hasL5Band ? Icons.speed : Icons.location_searching), 
-            color: Colors.grey.shade400, 
+            _acquisitionFlow == "NAVIC" ? Icons.satellite_alt : (_hasL5Band ? Icons.speed : Icons.location_searching), 
+            color: _acquisitionFlow == "NAVIC" ? Colors.green.shade400 : Colors.grey.shade400, 
             size: 48
           ),
           const SizedBox(height: 12),
           Text(
-            "Getting Location",
+            _acquisitionFlow == "NAVIC" ? "Getting NavIC Location" : "Getting Location",
             style: TextStyle(
               color: Colors.grey.shade600,
               fontSize: 18,
@@ -2021,7 +2170,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            "Using $_locationSource for positioning",
+            _acquisitionFlow == "NAVIC" ? 
+              "Using NavIC with ${_hasL5Band && _hasSBand ? 'L5 & S bands' : 'enhanced positioning'}" : 
+              "Using $_primarySystem for positioning",
             style: TextStyle(
               color: Colors.grey.shade500,
               fontSize: 14,
@@ -2044,7 +2195,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSystemStatusHeader() {
     final pos = _currentPosition!;
-    final isNavic = _locationSource == "NAVIC";
+    final isNavic = _isUsingNavic && _isNavicSupported && _isNavicActive;
     final activeBand = _activeBands.isNotEmpty ? _activeBands.first : "L1";
 
     return Container(
@@ -2107,6 +2258,23 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ],
+                    if (isNavic)
+                      Container(
+                        margin: const EdgeInsets.only(left: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          "NAVIC",
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 2),
@@ -2125,6 +2293,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(
                       fontSize: 10,
                       color: isNavic ? Colors.green.shade500 : Colors.blue.shade500,
+                    ),
+                  ),
+                ],
+                if (isNavic && _hasL5Band && _hasSBand) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    "L5 + S Bands Active",
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.green.shade600,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
@@ -2184,8 +2363,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icons.explore,
                 title: "LATITUDE",
                 value: pos.latitude.toStringAsFixed(6),
-                color: Colors.blue.shade50,
-                iconColor: Colors.blue.shade700,
+                color: _isUsingNavic ? Colors.green.shade50 : Colors.blue.shade50,
+                iconColor: _isUsingNavic ? Colors.green.shade700 : Colors.blue.shade700,
               ),
             ),
             const SizedBox(width: 12),
@@ -2194,8 +2373,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icons.explore_outlined,
                 title: "LONGITUDE",
                 value: pos.longitude.toStringAsFixed(6),
-                color: Colors.green.shade50,
-                iconColor: Colors.green.shade700,
+                color: _isUsingNavic ? Colors.green.shade50 : Colors.green.shade50,
+                iconColor: _isUsingNavic ? Colors.green.shade700 : Colors.green.shade700,
               ),
             ),
           ],
@@ -2227,8 +2406,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icons.location_on_sharp,
                 title: "ACCURACY",
                 value: "${pos.accuracy?.toStringAsFixed(1) ?? 'N/A'} meters",
-                color: Colors.orange.shade50,
-                iconColor: Colors.orange.shade700,
+                color: _isUsingNavic ? Colors.green.shade50 : Colors.orange.shade50,
+                iconColor: _isUsingNavic ? Colors.green.shade700 : Colors.orange.shade700,
               ),
             ),
           ],
@@ -2306,20 +2485,26 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
-              if (_activeBands.isNotEmpty)
+              if (_isUsingNavic)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.green.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
-                    "${_activeBands.join(', ')}",
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.green.shade700,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.satellite_alt, size: 12, color: Colors.green),
+                      const SizedBox(width: 4),
+                      Text(
+                        "NavIC Active",
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.green,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             ],
@@ -2332,10 +2517,48 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 12),
               _buildSatelliteStat("NavIC", "$_navicSatelliteCount", Colors.green),
               const SizedBox(width: 12),
-             
              // _buildSatelliteStat("In Fix", "$_navicUsedInFix", Colors.orange),
             ],
-
+          ),
+          const SizedBox(height: 8),
+          
+          // Location source indicator
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: _isUsingNavic ? Colors.green.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: _isUsingNavic ? Colors.green.withOpacity(0.3) : Colors.blue.withOpacity(0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _isUsingNavic ? Icons.satellite_alt : Icons.gps_fixed,
+                  size: 16,
+                  color: _isUsingNavic ? Colors.green : Colors.blue,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _isUsingNavic ? "Using NavIC Positioning" : "Using GPS Positioning",
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _isUsingNavic ? Colors.green : Colors.blue,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                if (_isNavicSupported && !_isUsingNavic)
+                  Text(
+                    "NavIC Available",
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.green,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -2438,7 +2661,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Check for NavIC support (requires both L5 and S bands)
     final bool hasNavicBands = _hasL5Band && _hasSBand;
     
-    if (_isNavicActive && hasNavicBands) {
+    if (_isUsingNavic && _isNavicActive && hasNavicBands) {
       bannerColor = Colors.green.shade50;
       bannerIconColor = Colors.green;
       bannerIcon = Icons.satellite_alt;
@@ -2528,6 +2751,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 _activeBands.join(', '),
                 style: TextStyle(
                   color: bannerIconColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          if (_isUsingNavic)
+            Container(
+              margin: const EdgeInsets.only(left: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                "NAVIC",
+                style: TextStyle(
+                  color: Colors.green,
                   fontSize: 10,
                   fontWeight: FontWeight.bold,
                 ),

@@ -102,6 +102,9 @@ class _SplashScreenState extends State<SplashScreen> {
       _controller = VideoPlayerController.asset('assets/navic_animetion.mp4');
       
       await _controller.initialize().then((_) {
+        // MUTE THE VIDEO: Set volume to 0
+        _controller.setVolume(0.0);
+        
         setState(() {
           _isVideoInitialized = true;
         });

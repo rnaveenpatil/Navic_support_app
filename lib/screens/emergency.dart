@@ -548,7 +548,7 @@ Future<void> _showEmergencySMSDialog() async {
                 Text(
                   "Select emergency service:",
                   style: TextStyle(
-                    fontSize: isSmallScreen ? 14 : 16,
+                    fontSize: isSmallScreen ? 12 : 16,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -557,10 +557,10 @@ Future<void> _showEmergencySMSDialog() async {
                 
                 // Emergency service selection - Better for small screens
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
                     color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: Colors.grey.shade300),
                   ),
                   child: DropdownButtonHideUnderline(

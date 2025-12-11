@@ -1,4 +1,3 @@
-
 // lib/services/location_service.dart
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
@@ -60,6 +59,11 @@ class EnhancedLocationService {
   List<GnssSatellite> _satelliteDetails = [];
   List<String> _satelliteNames = [];
   List<Map<String, dynamic>> _satelliteDetectionHistory = [];
+
+  // Navigation state tracking
+  bool _isFirstLocationAcquired = false;
+  bool _hasHardwareBeenChecked = false;
+  bool _shouldUseNavic = false;
 
   static final EnhancedLocationService _instance = EnhancedLocationService._internal();
   factory EnhancedLocationService() => _instance;
@@ -154,11 +158,101 @@ class EnhancedLocationService {
     }
   }
 
-  /// Get current location
-  Future<EnhancedPosition?> getCurrentLocation() async {
+  /// NEW: Main method that implements the proper flow
+  /// 1. Get GPS location first
+  /// 2. Check hardware capabilities
+  /// 3. If hardware supports NavIC, try to get NavIC-enhanced location
+  Future<EnhancedPosition?> getLocationWithNavICFlow() async {
     try {
-      print("📍 Getting current location...");
+      print("\n🎯 ========= STARTING LOCATION FLOW ==========");
       
+      // Step 1: Get GPS location first (always works)
+      print("🎯 STEP 1: Getting initial GPS location...");
+      Position? gpsPosition = await _getGpsLocation();
+      
+      if (gpsPosition == null) {
+        print("❌ Failed to get initial GPS location");
+        return null;
+      }
+      
+      // Step 2: Check hardware capabilities
+      print("🎯 STEP 2: Checking hardware capabilities...");
+      await _performHardwareDetection();
+      _hasHardwareBeenChecked = true;
+      
+      // Step 3: Check if device can use NavIC
+      final bool hasNavicBands = _hasL5Band && _hasSBand;
+      final bool isNavicReady = _isNavicSupported && _isNavicActive && hasNavicBands;
+      
+      print("🎯 Hardware Status:");
+      print("  ✅ L5 Band: $_hasL5Band");
+      print("  ✅ S Band: $_hasSBand");
+      print("  ✅ NavIC Supported: $_isNavicSupported");
+      print("  ✅ NavIC Active: $_isNavicActive");
+      print("  ✅ Has L5+S Bands: $hasNavicBands");
+      print("  ✅ Can Use NavIC: $isNavicReady");
+      
+      EnhancedPosition? finalPosition;
+      
+      if (isNavicReady) {
+        // Step 4: Try to get NavIC-enhanced location
+        print("🎯 STEP 3: Device supports NavIC, attempting NavIC-enhanced location...");
+        _shouldUseNavic = true;
+        finalPosition = await _tryGetNavicEnhancedLocation();
+        
+        if (finalPosition != null) {
+          print("✅ Successfully acquired NavIC-enhanced location");
+        } else {
+          print("⚠️ NavIC acquisition failed, falling back to GPS");
+          _shouldUseNavic = false;
+          finalPosition = _createEnhancedPosition(gpsPosition, false);
+        }
+      } else {
+        // Step 4: Use standard GPS
+        print("🎯 STEP 3: Device does not support NavIC, using standard GPS");
+        _shouldUseNavic = false;
+        finalPosition = _createEnhancedPosition(gpsPosition, false);
+      }
+      
+      // Step 5: Update satellite data
+      await updateSatelliteData();
+      
+      if (finalPosition != null) {
+        _totalReadings++;
+        _updatePerformanceTracking(finalPosition.accuracy!, gpsPosition);
+        _addToHistory(finalPosition);
+        _isFirstLocationAcquired = true;
+        
+        print("\n🎯 ========= LOCATION FLOW COMPLETE ==========");
+        print("✅ Final Position Source: ${finalPosition.locationSource}");
+        print("✅ Using NavIC: ${finalPosition.isNavicEnhanced}");
+        print("✅ Accuracy: ${finalPosition.accuracy?.toStringAsFixed(2)}m");
+        print("==========================================\n");
+      }
+      
+      return finalPosition;
+        
+    } catch (e) {
+      print("❌ Location acquisition failed: $e");
+      
+      // Provide more detailed error information
+      if (e.toString().contains('PERMISSION_DENIED')) {
+        print("❌ Permission denied for location access");
+      } else if (e.toString().contains('Location services disabled')) {
+        print("❌ Location services are disabled");
+      } else if (e.toString().contains('timeout')) {
+        print("❌ Location acquisition timed out");
+      } else {
+        print("❌ Unknown error: $e");
+      }
+      
+      return null;
+    }
+  }
+
+  /// Get GPS location (first step)
+  Future<Position?> _getGpsLocation() async {
+    try {
       // First check if location services are enabled
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
@@ -183,64 +277,59 @@ class EnhancedLocationService {
         return null;
       }
 
-      // Perform hardware detection
-      await _performHardwareDetection();
-
-      print("📍 Acquiring position with high accuracy...");
-      
-      // Try with best accuracy first
+      // Get position using GPS
+      Position position;
       try {
-        final position = await Geolocator.getCurrentPosition(
+        position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.best,
           timeLimit: const Duration(seconds: 10),
         );
-
-        print("✅ Position acquired: ${position.latitude}, ${position.longitude}");
-        
-        _totalReadings++;
-        _updatePerformanceTracking(position.accuracy, position);
-
-        final enhancedPosition = _createEnhancedPosition(position);
-        _addToHistory(enhancedPosition);
-
-        return enhancedPosition;
-        
+        print("✅ GPS position acquired: ${position.latitude}, ${position.longitude}");
+        print("✅ GPS Accuracy: ${position.accuracy.toStringAsFixed(2)} meters");
+        return position;
       } catch (e) {
-        print("⚠️ High accuracy failed: $e, trying with lower accuracy...");
-        
-        // Fallback to lower accuracy
-        final position = await Geolocator.getCurrentPosition(
+        print("⚠️ High accuracy GPS failed, trying lower accuracy...");
+        position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.medium,
           timeLimit: const Duration(seconds: 10),
         );
-
-        print("✅ Fallback position acquired: ${position.latitude}, ${position.longitude}");
-        
-        _totalReadings++;
-        _updatePerformanceTracking(position.accuracy, position);
-
-        final enhancedPosition = _createEnhancedPosition(position);
-        _addToHistory(enhancedPosition);
-
-        return enhancedPosition;
+        print("✅ Lower accuracy GPS position acquired");
+        print("✅ GPS Accuracy: ${position.accuracy.toStringAsFixed(2)} meters");
+        return position;
       }
-
     } catch (e) {
-      print("❌ Location acquisition failed: $e");
-      
-      // Provide more detailed error information
-      if (e.toString().contains('PERMISSION_DENIED')) {
-        print("❌ Permission denied for location access");
-      } else if (e.toString().contains('Location services disabled')) {
-        print("❌ Location services are disabled");
-      } else if (e.toString().contains('timeout')) {
-        print("❌ Location acquisition timed out");
-      } else {
-        print("❌ Unknown error: $e");
-      }
-      
+      print("❌ GPS acquisition failed: $e");
       return null;
     }
+  }
+
+  /// Try to get NavIC-enhanced location
+  Future<EnhancedPosition?> _tryGetNavicEnhancedLocation() async {
+    try {
+      print("🎯 Attempting NavIC-enhanced location acquisition...");
+      
+      // Try with best accuracy for NavIC
+      Position navicPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 8),
+      );
+      
+      print("✅ NavIC-enhanced position acquired");
+      print("✅ NavIC Accuracy: ${navicPosition.accuracy.toStringAsFixed(2)} meters");
+      
+      // Create enhanced position with NavIC info
+      final enhancedPosition = _createEnhancedPosition(navicPosition, true);
+      return enhancedPosition;
+      
+    } catch (e) {
+      print("⚠️ NavIC acquisition failed: $e");
+      return null;
+    }
+  }
+
+  /// Get current location - for backward compatibility
+  Future<EnhancedPosition?> getCurrentLocation() async {
+    return await getLocationWithNavICFlow();
   }
 
   /// Perform hardware detection (PRIVATE METHOD)
@@ -274,7 +363,67 @@ class EnhancedLocationService {
       _hasL2Band = hardwareResult.hasL2Band;
       _hasSBand = hardwareResult.hasSBand;
       _positioningMethod = hardwareResult.positioningMethod;
-    //  _primarySystem = _determinePrimarySystemFromStats(hardwareResult.systemStats);
+      
+      // Extract primary system from available data if possible
+      if (_hasL5Band && _hasSBand) {
+        _primarySystem = "NavIC";
+      } else if (_hasL5Band) {
+        _primarySystem = "GPS+L5";
+      } else {
+        _primarySystem = "GPS";
+      }
+      
+      // Try to get system stats from satellite data
+      try {
+        if (_allSatellites.isNotEmpty) {
+          // Count satellites by system
+          final systemCounts = <String, int>{};
+          for (final sat in _allSatellites) {
+            final system = sat.system;
+            systemCounts[system] = (systemCounts[system] ?? 0) + 1;
+          }
+          
+          // Find the system with most satellites
+          String maxSystem = "GPS";
+          int maxCount = 0;
+          for (final entry in systemCounts.entries) {
+            if (entry.value > maxCount) {
+              maxCount = entry.value;
+              maxSystem = entry.key;
+            }
+          }
+          
+          // Map to display names
+          switch (maxSystem.toUpperCase()) {
+            case 'IRNSS':
+            case 'NAVIC': 
+              _primarySystem = "NavIC";
+              break;
+            case 'GALILEO': 
+              _primarySystem = "Galileo";
+              break;
+            case 'BEIDOU':
+            case 'BDS': 
+              _primarySystem = "BeiDou";
+              break;
+            case 'GLONASS': 
+              _primarySystem = "GLONASS";
+              break;
+            case 'GPS': 
+              _primarySystem = "GPS";
+              break;
+            case 'QZSS': 
+              _primarySystem = "QZSS";
+              break;
+            case 'SBAS': 
+              _primarySystem = "SBAS";
+              break;
+          }
+        }
+      } catch (e) {
+        print("⚠️ Error determining primary system from satellites: $e");
+      }
+      
       _l5BandInfo = hardwareResult.l5BandInfo;
       _bandInfo = hardwareResult.bandInfo;
       _allSatellites = hardwareResult.gnssSatellites;
@@ -307,14 +456,30 @@ class EnhancedLocationService {
     String maxSystem = "GPS";
     int maxCount = 0;
     
-    for (final entry in systemStats.entries) {
-      final stats = entry.value as Map<String, dynamic>;
-      final usedCount = stats['used'] as int? ?? 0;
-      
-      if (usedCount > maxCount) {
-        maxCount = usedCount;
-        maxSystem = entry.key;
+    try {
+      for (final entry in systemStats.entries) {
+        final stats = entry.value;
+        if (stats is Map<String, dynamic>) {
+          final usedCount = stats['used'] as int? ?? 0;
+          
+          if (usedCount > maxCount) {
+            maxCount = usedCount;
+            maxSystem = entry.key;
+          }
+        } else if (stats is Map) {
+          // Handle non-typed Maps
+          final Map<dynamic, dynamic> dynamicStats = stats;
+          final usedCount = dynamicStats['used'] as int? ?? 0;
+          
+          if (usedCount > maxCount) {
+            maxCount = usedCount;
+            maxSystem = entry.key;
+          }
+        }
       }
+    } catch (e) {
+      print("⚠️ Error determining primary system: $e");
+      return "GPS";
     }
     
     // Map to display names
@@ -509,6 +674,7 @@ class EnhancedLocationService {
     _verificationMethods = [];
     _acquisitionTimeMs = 0.0;
     _lastMessage = null;
+    _shouldUseNavic = false;
     
     // Reset band detection
     _availableBands = {};
@@ -520,8 +686,7 @@ class EnhancedLocationService {
   }
 
   /// Create enhanced position
-  EnhancedPosition _createEnhancedPosition(Position position) {
-    final isNavicEnhanced = _isNavicSupported && _isNavicActive && _navicUsedInFix > 0;
+  EnhancedPosition _createEnhancedPosition(Position position, bool isNavicEnhanced) {
     final locationSource = isNavicEnhanced ? "NAVIC" : _primarySystem;
 
     final enhancedAccuracy = _calculateAccuracy(
@@ -952,6 +1117,7 @@ class EnhancedLocationService {
       'acquisitionTimeMs': _acquisitionTimeMs,
       'locationHistorySize': _locationHistory.length,
       'message': _lastMessage,
+      'shouldUseNavic': _shouldUseNavic,
     };
   }
 
@@ -991,6 +1157,7 @@ class EnhancedLocationService {
         print("✅ Updated satellite data: $_totalSatelliteCount satellites, $_navicSatelliteCount NavIC ($_navicUsedInFix in fix)");
         print("📡 Active bands: ${_activeBands.join(', ')}");
         print("🎯 Primary system: $_primarySystem");
+        print("🎯 Should use NavIC: $_shouldUseNavic");
       }
     } catch (e) {
       print("❌ Error updating satellite data: $e");
@@ -1049,7 +1216,7 @@ class EnhancedLocationService {
   String get chipsetModel => _chipsetModel;
   double get chipsetConfidence => _chipsetConfidence;
   double get confidenceLevel => _confidenceLevel;
-  double get averageSignalStrength => _averageSignalStrength; // FIXED: Added this getter
+  double get averageSignalStrength => _averageSignalStrength;
   bool get hasL1Band => _hasL1Band;
   bool get hasL2Band => _hasL2Band;
   bool get hasL5Band => _hasL5Band;
@@ -1072,7 +1239,10 @@ class EnhancedLocationService {
   int get navicUsedInFix => _navicUsedInFix;
   List<String> get verificationMethods => List.unmodifiable(_verificationMethods);
   double get acquisitionTimeMs => _acquisitionTimeMs;
-  DateTime? get lastHardwareCheck => _lastHardwareCheck; // FIXED: Added this getter
+  DateTime? get lastHardwareCheck => _lastHardwareCheck;
+  bool get hasHardwareBeenChecked => _hasHardwareBeenChecked;
+  bool get isFirstLocationAcquired => _isFirstLocationAcquired;
+  bool get shouldUseNavic => _shouldUseNavic;
   
   /// Get all visible satellites - NOW RETURNS List<GnssSatellite>
   List<GnssSatellite> get allSatellites => List.unmodifiable(_allSatellites);
