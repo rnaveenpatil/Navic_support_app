@@ -208,13 +208,13 @@ class EnhancedLocationService {
           finalPosition = _createEnhancedPosition(gpsPosition, false);
         }
       } else {
-        // Step 4: Use standard GPS
-        print("🎯 STEP 3: Device does not support NavIC, using standard GPS");
+        // Step 4: Use standard GPS or other available system
+        print("🎯 STEP 3: Device does not support NavIC, using available GNSS system");
         _shouldUseNavic = false;
         finalPosition = _createEnhancedPosition(gpsPosition, false);
       }
       
-      // Step 5: Update satellite data
+      // Step 5: Update satellite data to determine actual system being used
       await updateSatelliteData();
       
       if (finalPosition != null) {
@@ -226,6 +226,7 @@ class EnhancedLocationService {
         print("\n🎯 ========= LOCATION FLOW COMPLETE ==========");
         print("✅ Final Position Source: ${finalPosition.locationSource}");
         print("✅ Using NavIC: ${finalPosition.isNavicEnhanced}");
+        print("✅ Actual System: $_primarySystem");
         print("✅ Accuracy: ${finalPosition.accuracy?.toStringAsFixed(2)}m");
         print("==========================================\n");
       }
@@ -364,65 +365,8 @@ class EnhancedLocationService {
       _hasSBand = hardwareResult.hasSBand;
       _positioningMethod = hardwareResult.positioningMethod;
       
-      // Extract primary system from available data if possible
-      if (_hasL5Band && _hasSBand) {
-        _primarySystem = "NavIC";
-      } else if (_hasL5Band) {
-        _primarySystem = "GPS+L5";
-      } else {
-        _primarySystem = "GPS";
-      }
-      
-      // Try to get system stats from satellite data
-      try {
-        if (_allSatellites.isNotEmpty) {
-          // Count satellites by system
-          final systemCounts = <String, int>{};
-          for (final sat in _allSatellites) {
-            final system = sat.system;
-            systemCounts[system] = (systemCounts[system] ?? 0) + 1;
-          }
-          
-          // Find the system with most satellites
-          String maxSystem = "GPS";
-          int maxCount = 0;
-          for (final entry in systemCounts.entries) {
-            if (entry.value > maxCount) {
-              maxCount = entry.value;
-              maxSystem = entry.key;
-            }
-          }
-          
-          // Map to display names
-          switch (maxSystem.toUpperCase()) {
-            case 'IRNSS':
-            case 'NAVIC': 
-              _primarySystem = "NavIC";
-              break;
-            case 'GALILEO': 
-              _primarySystem = "Galileo";
-              break;
-            case 'BEIDOU':
-            case 'BDS': 
-              _primarySystem = "BeiDou";
-              break;
-            case 'GLONASS': 
-              _primarySystem = "GLONASS";
-              break;
-            case 'GPS': 
-              _primarySystem = "GPS";
-              break;
-            case 'QZSS': 
-              _primarySystem = "QZSS";
-              break;
-            case 'SBAS': 
-              _primarySystem = "SBAS";
-              break;
-          }
-        }
-      } catch (e) {
-        print("⚠️ Error determining primary system from satellites: $e");
-      }
+      // DO NOT set _primarySystem here based on bands - it should come from actual satellite data
+      // Let _updateSystemStats() determine it based on actual satellite usage
       
       _l5BandInfo = hardwareResult.l5BandInfo;
       _bandInfo = hardwareResult.bandInfo;
@@ -439,7 +383,7 @@ class EnhancedLocationService {
       // Extract band detection information
       _extractBandDetectionInfo(hardwareResult);
 
-      _updateSystemStats();
+      _updateSystemStats(); // This will properly set _primarySystem based on actual satellites
 
       _logHardwareDetectionResult(hardwareResult);
 
@@ -449,31 +393,33 @@ class EnhancedLocationService {
     }
   }
 
-  /// Determine primary system from system stats
+  /// Determine primary system from system stats - FIXED
   String _determinePrimarySystemFromStats(Map<String, dynamic> systemStats) {
     if (systemStats.isEmpty) return "GPS";
     
     String maxSystem = "GPS";
-    int maxCount = 0;
+    int maxUsed = 0;
     
     try {
       for (final entry in systemStats.entries) {
+        final system = entry.key;
         final stats = entry.value;
+        
         if (stats is Map<String, dynamic>) {
           final usedCount = stats['used'] as int? ?? 0;
           
-          if (usedCount > maxCount) {
-            maxCount = usedCount;
-            maxSystem = entry.key;
+          if (usedCount > maxUsed) {
+            maxUsed = usedCount;
+            maxSystem = system;
           }
         } else if (stats is Map) {
           // Handle non-typed Maps
           final Map<dynamic, dynamic> dynamicStats = stats;
           final usedCount = dynamicStats['used'] as int? ?? 0;
           
-          if (usedCount > maxCount) {
-            maxCount = usedCount;
-            maxSystem = entry.key;
+          if (usedCount > maxUsed) {
+            maxUsed = usedCount;
+            maxSystem = system.toString();
           }
         }
       }
@@ -482,16 +428,20 @@ class EnhancedLocationService {
       return "GPS";
     }
     
-    // Map to display names
+    // Map to display names - FIXED to recognize all systems
     switch (maxSystem.toUpperCase()) {
       case 'IRNSS':
       case 'NAVIC': return "NavIC";
-      case 'GALILEO': return "Galileo";
-      case 'BEIDOU':
-      case 'BDS': return "BeiDou";
-      case 'GLONASS': return "GLONASS";
       case 'GPS': return "GPS";
+      case 'GLO':
+      case 'GLONASS': return "GLONASS";
+      case 'GAL':
+      case 'GALILEO': return "Galileo";
+      case 'BDS':
+      case 'BEIDOU': return "BeiDou";
+      case 'QZS':
       case 'QZSS': return "QZSS";
+      case 'SBS':
       case 'SBAS': return "SBAS";
       default: return maxSystem;
     }
@@ -530,7 +480,7 @@ class EnhancedLocationService {
     }
   }
 
-  /// Update system statistics
+  /// Update system statistics - FIXED to properly set primary system
   void _updateSystemStats() {
     final systemCounts = <String, int>{};
     final systemUsed = <String, int>{};
@@ -595,8 +545,10 @@ class EnhancedLocationService {
       return cn0 > 0;
     }).toList();
 
-    // Update primary system based on actual usage
+    // FIXED: Determine primary system based on ACTUAL satellite usage
     _primarySystem = _determinePrimarySystemFromStats(_systemStats);
+    
+    print("🎯 Primary System Determined: $_primarySystem");
   }
 
   String getCountryFlag(String system) {
@@ -687,7 +639,14 @@ class EnhancedLocationService {
 
   /// Create enhanced position
   EnhancedPosition _createEnhancedPosition(Position position, bool isNavicEnhanced) {
-    final locationSource = isNavicEnhanced ? "NAVIC" : _primarySystem;
+    // Determine location source based on actual system being used
+    String locationSource;
+    if (isNavicEnhanced) {
+      locationSource = "NAVIC";
+    } else {
+      // Use the actual primary system determined from satellites
+      locationSource = _primarySystem;
+    }
 
     final enhancedAccuracy = _calculateAccuracy(
       position.accuracy,
@@ -718,7 +677,7 @@ class EnhancedLocationService {
       hasL5Band: _hasL5Band,
       positioningMethod: _positioningMethod,
       systemStats: _systemStats,
-      primarySystem: _primarySystem,
+      primarySystem: _primarySystem, // Pass the actual primary system
       chipsetType: _chipsetType,
       chipsetVendor: _chipsetVendor,
       chipsetModel: _chipsetModel,

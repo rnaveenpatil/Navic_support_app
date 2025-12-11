@@ -219,7 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
           SnackBar(
             content: Text(_isUsingNavic ? 
               "Location refreshed using NavIC" : 
-              "Location refreshed using GPS"),
+              "Location refreshed using ${position.locationSource}"),
             backgroundColor: _isUsingNavic ? Colors.green : Colors.blue,
             duration: const Duration(seconds: 2),
           ),
@@ -291,6 +291,7 @@ class _HomeScreenState extends State<HomeScreen> {
       print("  ✅ L5 Band: $_hasL5Band (${(_l5Confidence * 100).toStringAsFixed(1)}%)");
       print("  ✅ S Band: $_hasSBand");
       print("  ✅ Should Use NavIC: ${_locationService.shouldUseNavic}");
+      print("  ✅ Primary System: $_primarySystem");
 
     } catch (e) {
       print("❌ Error updating hardware info: $e");
@@ -549,7 +550,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SnackBar(
             content: Text("Using GPS for positioning"),
             backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
+            duration: Duration(seconds: 3),
           ),
         );
       }
@@ -560,7 +561,7 @@ class _HomeScreenState extends State<HomeScreen> {
         const SnackBar(
           content: Text("Location acquisition timed out"),
           backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
+          duration: Duration(seconds: 3),
         ),
       );
     } catch (e) {
@@ -576,49 +577,70 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// FIXED: Properly determine primary system
   String _determinePrimarySystem() {
-    // First check the system stats to see which system is providing the most satellites
+    // First use what's already determined by location service
+    if (_primarySystem.isNotEmpty && _primarySystem != "Unknown") {
+      return _primarySystem;
+    }
+    
+    // Then check system stats
     if (_systemStats.isNotEmpty) {
-      final Map<String, dynamic> systemData = {};
-      
-      for (final entry in _systemStats.entries) {
-        final system = entry.key;
-        final stats = entry.value as Map<String, dynamic>;
-        final usedCount = stats['used'] as int? ?? 0;
-        systemData[system] = usedCount;
-      }
-      
-      // Find the system with the most satellites used in fix
-      String maxSystem = "GPS";
-      int maxCount = 0;
-      
-      for (final entry in systemData.entries) {
-        if (entry.value > maxCount) {
-          maxCount = entry.value;
-          maxSystem = entry.key;
+      try {
+        // Find the system with the most satellites used in fix
+        String maxSystem = "GPS";
+        int maxUsed = 0;
+        
+        for (final entry in _systemStats.entries) {
+          final system = entry.key;
+          final stats = entry.value;
+          
+          if (stats is Map<String, dynamic>) {
+            final usedCount = stats['used'] as int? ?? 0;
+            if (usedCount > maxUsed) {
+              maxUsed = usedCount;
+              maxSystem = system;
+            }
+          }
         }
-      }
-      
-      // Return the system name based on origin
-      if (maxSystem == 'IRNSS' || maxSystem == 'NAVIC') {
-        return "NavIC";
-      } else if (maxSystem == 'GALILEO') {
-        return "Galileo";
-      } else if (maxSystem == 'BEIDOU' || maxSystem == 'BDS') {
-        return "BeiDou";
-      } else if (maxSystem == 'GLONASS') {
-        return "GLONASS";
-      } else if (maxSystem == 'GPS') {
-        return "GPS";
-      } else if (maxSystem == 'QZSS') {
-        return "QZSS";
-      } else if (maxSystem == 'SBAS') {
-        return "SBAS";
+        
+        // Map to proper display names
+        return _mapSystemToDisplayName(maxSystem);
+      } catch (e) {
+        print("⚠️ Error determining primary system: $e");
       }
     }
     
-    // Fallback to GPS
+    // Fallback based on positioning method
+    if (_positioningMethod.contains("NAVIC")) return "NavIC";
+    if (_positioningMethod.contains("GLONASS")) return "GLONASS";
+    if (_positioningMethod.contains("GALILEO")) return "Galileo";
+    if (_positioningMethod.contains("BEIDOU")) return "BeiDou";
+    if (_positioningMethod.contains("QZSS")) return "QZSS";
+    if (_positioningMethod.contains("SBAS")) return "SBAS";
+    if (_positioningMethod.contains("MULTI")) return "Multi-GNSS";
+    
     return "GPS";
+  }
+
+  /// Map system codes to display names
+  String _mapSystemToDisplayName(String system) {
+    switch (system.toUpperCase()) {
+      case 'IRNSS':
+      case 'NAVIC': return "NavIC";
+      case 'GPS': return "GPS";
+      case 'GLO':
+      case 'GLONASS': return "GLONASS";
+      case 'GAL':
+      case 'GALILEO': return "Galileo";
+      case 'BDS':
+      case 'BEIDOU': return "BeiDou";
+      case 'QZS':
+      case 'QZSS': return "QZSS";
+      case 'SBS':
+      case 'SBAS': return "SBAS";
+      default: return system;
+    }
   }
 
   Future<void> _updateSatelliteData() async {
@@ -640,7 +662,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _hasSBand = _locationService.hasSBand;
         _l5Confidence = _locationService.l5Confidence;
         _positioningMethod = _locationService.positioningMethod;
-        _primarySystem = _determinePrimarySystem();
+        _primarySystem = _locationService.primarySystem; // Get from service
         
         // Update band information
         _activeBands = _locationService.activeBands;
@@ -649,6 +671,8 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       
       print("✅ Satellite data updated: $_totalSatelliteCount total, $_navicSatelliteCount NavIC ($_navicUsedInFix in fix)");
+      print("🎯 Primary System: $_primarySystem");
+      print("🎯 Positioning Method: $_positioningMethod");
     } catch (e) {
       print("❌ Error updating satellite data: $e");
     }
@@ -667,7 +691,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final bool hasNavicBands = _hasL5Band && _hasSBand;
     
     if (!_isNavicSupported && !hasNavicBands) {
-      _hardwareMessage = "$bandsStr Device does not have both L5 and S bands required for NavIC. Using standard GPS.";
+      _hardwareMessage = "$bandsStr Device does not have both L5 and S bands required for NavIC. Using $_primarySystem.";
       _hardwareStatus = "Limited Hardware";
     } else if (_isNavicSupported && hasNavicBands) {
       _hardwareMessage = "$bandsStr Device has L5 and S bands. NavIC positioning ready!";
@@ -676,11 +700,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _hardwareMessage = "$bandsStr Device has L5 and S bands but NavIC not fully supported.";
       _hardwareStatus = "Partial NavIC";
     } else if (_hasL5Band) {
-      _hardwareMessage = "$bandsStr Device has L5 band support. GPS positioning available.";
-      _hardwareStatus = "GPS with L5";
+      _hardwareMessage = "$bandsStr Device has L5 band support. $_primarySystem positioning available.";
+      _hardwareStatus = "$_primarySystem with L5";
     } else {
-      _hardwareMessage = "$bandsStr Using standard GPS positioning.";
-      _hardwareStatus = "GPS Only";
+      _hardwareMessage = "$bandsStr Using $_primarySystem positioning.";
+      _hardwareStatus = "$_primarySystem Only";
     }
 
     _updateLocationSource();
@@ -729,6 +753,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void _updateLocationState(EnhancedPosition position) {
     setState(() {
       _currentPosition = position;
+      
+      // Trust the location service for primary system
+      _primarySystem = position.primarySystem;
+      if (_primarySystem.isEmpty || _primarySystem == "Unknown") {
+        _primarySystem = _determinePrimarySystem();
+      }
+      
       _updateLocationSource();
       _updateLocationQuality(position);
       _locationAcquired = true;
@@ -744,13 +775,18 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasSBand = _locationService.hasSBand;
       _l5Confidence = _locationService.l5Confidence;
       _positioningMethod = _locationService.positioningMethod;
-      _primarySystem = _determinePrimarySystem();
+      
+      // Ensure primary system is correct
+      if (_primarySystem.isEmpty || _primarySystem == "Unknown") {
+        _primarySystem = _determinePrimarySystem();
+      }
+      
       _chipsetType = _locationService.chipsetType;
       _chipsetVendor = _locationService.chipsetVendor;
       _chipsetModel = _locationService.chipsetModel;
       _chipsetConfidence = _locationService.chipsetConfidence;
       _isUsingNavic = position.isNavicEnhanced;
-      _acquisitionFlow = _isUsingNavic ? "NAVIC" : "GPS";
+      _acquisitionFlow = _isUsingNavic ? "NAVIC" : _primarySystem;
       
       _allSatellites = _locationService.allSatellites;
       _satelliteDetails = _locationService.satelliteDetails;
@@ -806,6 +842,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Show actual system being used
   void _updateLocationSource() {
     if (_isUsingNavic && _isNavicSupported && _isNavicActive) {
       _locationSource = "NAVIC";
@@ -813,6 +850,8 @@ class _HomeScreenState extends State<HomeScreen> {
       // Use the primary system determined from satellite data
       _locationSource = _primarySystem;
     }
+    
+    print("📍 Location Source Updated: $_locationSource (Using NavIC: $_isUsingNavic)");
   }
 
   void _updateLocationQuality(EnhancedPosition pos) {
@@ -828,26 +867,29 @@ class _HomeScreenState extends State<HomeScreen> {
     else if (isUsingL1) bandInfo = "L1 ";
     else if (isUsingS) bandInfo = "S ";
 
+    // Use the actual location source
+    final String systemName = _locationSource;
+    
     if (pos.accuracy != null && pos.accuracy! < 1.0) {
       _locationQuality = isUsingNavic ? 
         "${bandInfo}NavIC Excellent" : 
-        "${bandInfo}$_primarySystem Excellent";
+        "${bandInfo}$systemName Excellent";
     } else if (pos.accuracy != null && pos.accuracy! < 2.0) {
       _locationQuality = isUsingNavic ? 
         "${bandInfo}NavIC High" : 
-        "${bandInfo}$_primarySystem High";
+        "${bandInfo}$systemName High";
     } else if (pos.accuracy != null && pos.accuracy! < 5.0) {
       _locationQuality = isUsingNavic ? 
         "${bandInfo}NavIC Good" : 
-        "${bandInfo}$_primarySystem Good";
+        "${bandInfo}$systemName Good";
     } else if (pos.accuracy != null && pos.accuracy! < 10.0) {
       _locationQuality = isUsingNavic ? 
         "${bandInfo}NavIC Basic" : 
-        "${bandInfo}$_primarySystem Basic";
+        "${bandInfo}$systemName Basic";
     } else {
       _locationQuality = isUsingNavic ? 
         "${bandInfo}NavIC Low" : 
-        "${bandInfo}$_primarySystem Low";
+        "${bandInfo}$systemName Low";
     }
   }
 
@@ -934,7 +976,7 @@ class _HomeScreenState extends State<HomeScreen> {
     else if (isL2) primaryColor = Colors.blue;
     else if (isL1) primaryColor = Colors.orange;
     else if (isS) primaryColor = Colors.purple;
-    else primaryColor = isNavic ? Colors.green : Colors.blue;
+    else primaryColor = isNavic ? Colors.green : _getSystemColor(_primarySystem);
 
     return Stack(
       alignment: Alignment.center,
@@ -1667,7 +1709,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(
             children: [
               Icon(
-                isNavicPrimary ? Icons.satellite_alt : Icons.gps_fixed,
+                isNavicPrimary ? Icons.satellite_alt : _getSystemIcon(_primarySystem),
                 color: primaryColor,
                 size: 18,
               ),
@@ -1784,6 +1826,21 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  IconData _getSystemIcon(String system) {
+    switch (system.toUpperCase()) {
+      case 'NAVIC':
+      case 'IRNSS': return Icons.satellite_alt;
+      case 'GPS': return Icons.gps_fixed;
+      case 'GLONASS': return Icons.satellite;
+      case 'GALILEO': return Icons.satellite;
+      case 'BEIDOU':
+      case 'BDS': return Icons.satellite;
+      case 'QZSS': return Icons.satellite;
+      case 'SBAS': return Icons.satellite;
+      default: return Icons.gps_fixed;
+    }
+  }
+
   Color _getSignalColor(double cn0) {
     if (cn0 >= 35) return Colors.green;
     if (cn0 >= 25) return Colors.blue;
@@ -1832,8 +1889,9 @@ class _HomeScreenState extends State<HomeScreen> {
         appBarSubtitle += " • S Band";
       }
       
-      // Add current location source
-      appBarSubtitle += " • Using ${_isUsingNavic ? 'NavIC' : 'GPS'}";
+      // Add current location source - Show actual system being used
+      final displaySystem = _isUsingNavic ? 'NavIC' : _primarySystem;
+      appBarSubtitle += " • Using $displaySystem";
     }
 
     return Scaffold(
@@ -1866,11 +1924,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           ],
         ),
-        backgroundColor: _isUsingNavic ? Colors.green.shade700 : Colors.blue.shade700,
+        backgroundColor: _isUsingNavic ? Colors.green.shade700 : _getSystemColor(_primarySystem).withOpacity(0.8),
         elevation: 2,
         actions: [
-          // Show NavIC/GPS status icon
-         
           IconButton(
             icon: Icon(_isLoading ? Icons.refresh : Icons.refresh_outlined),
             onPressed: _isLoading ? null : _refreshLocation,
@@ -1956,12 +2012,12 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_currentPosition != null)
             FloatingActionButton(
               onPressed: _refreshLocation,
-              backgroundColor: _isUsingNavic ? Colors.green : Colors.blue,
+              backgroundColor: _isUsingNavic ? Colors.green : _getSystemColor(_primarySystem),
               child: Icon(
-                _isUsingNavic ? Icons.satellite_alt : Icons.my_location, 
+                _isUsingNavic ? Icons.satellite_alt : _getSystemIcon(_primarySystem), 
                 color: Colors.white
               ),
-              tooltip: _isUsingNavic ? 'NavIC Location' : 'GPS Location',
+              tooltip: _isUsingNavic ? 'NavIC Location' : '$_primarySystem Location',
             ),
         ],
       ),
@@ -1969,6 +2025,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLoadingOverlay() {
+    // Determine display system name
+    final displaySystem = _isUsingNavic ? 'NavIC' : _primarySystem;
+    
     return Container(
       color: Colors.black.withOpacity(0.4),
       child: Center(
@@ -1977,7 +2036,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation<Color>(
-                _isUsingNavic ? Colors.green : Colors.blue
+                _isUsingNavic ? Colors.green : _getSystemColor(_primarySystem)
               ),
               strokeWidth: 3,
             ),
@@ -1992,9 +2051,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              _acquisitionFlow == "NAVIC" ? 
+              _isUsingNavic ? 
                 "Using NavIC positioning" : 
-                "Using GPS positioning",
+                "Using $_primarySystem positioning",
               style: TextStyle(
                 color: Colors.white70,
                 fontSize: 14,
@@ -2155,13 +2214,13 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            _acquisitionFlow == "NAVIC" ? Icons.satellite_alt : (_hasL5Band ? Icons.speed : Icons.location_searching), 
-            color: _acquisitionFlow == "NAVIC" ? Colors.green.shade400 : Colors.grey.shade400, 
+            _isUsingNavic ? Icons.satellite_alt : _getSystemIcon(_primarySystem), 
+            color: _isUsingNavic ? Colors.green.shade400 : _getSystemColor(_primarySystem).withOpacity(0.7), 
             size: 48
           ),
           const SizedBox(height: 12),
           Text(
-            _acquisitionFlow == "NAVIC" ? "Getting NavIC Location" : "Getting Location",
+            _isUsingNavic ? "Getting NavIC Location" : "Getting $_primarySystem Location",
             style: TextStyle(
               color: Colors.grey.shade600,
               fontSize: 18,
@@ -2170,7 +2229,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            _acquisitionFlow == "NAVIC" ? 
+            _isUsingNavic ? 
               "Using NavIC with ${_hasL5Band && _hasSBand ? 'L5 & S bands' : 'enhanced positioning'}" : 
               "Using $_primarySystem for positioning",
             style: TextStyle(
@@ -2203,12 +2262,12 @@ class _HomeScreenState extends State<HomeScreen> {
       decoration: BoxDecoration(
         color: isNavic
             ? Colors.green.withOpacity(0.15)
-            : Colors.blue.withOpacity(0.15),
+            : _getSystemColor(_primarySystem).withOpacity(0.15),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isNavic
               ? Colors.green.withOpacity(0.3)
-              : Colors.blue.withOpacity(0.3),
+              : _getSystemColor(_primarySystem).withOpacity(0.3),
         ),
       ),
       child: Row(
@@ -2216,11 +2275,11 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: isNavic ? Colors.green : Colors.blue,
+              color: isNavic ? Colors.green : _getSystemColor(_primarySystem),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              isNavic ? Icons.satellite_alt : Icons.gps_fixed,
+              isNavic ? Icons.satellite_alt : _getSystemIcon(_primarySystem),
               color: Colors.white,
               size: 20,
             ),
@@ -2237,7 +2296,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 10,
-                        color: isNavic ? Colors.green.shade800 : Colors.blue.shade800,
+                        color: isNavic ? Colors.green.shade800 : _getSystemColor(_primarySystem).withOpacity(0.9),
                       ),
                     ),
                     if (_activeBands.isNotEmpty) ...[
@@ -2282,7 +2341,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _locationQuality,
                   style: TextStyle(
                     fontSize: 12,
-                    color: isNavic ? Colors.green.shade600 : Colors.blue.shade600,
+                    color: isNavic ? Colors.green.shade600 : _getSystemColor(_primarySystem).withOpacity(0.8),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -2292,7 +2351,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     "$_chipsetVendor $_chipsetModel",
                     style: TextStyle(
                       fontSize: 10,
-                      color: isNavic ? Colors.green.shade500 : Colors.blue.shade500,
+                      color: isNavic ? Colors.green.shade500 : _getSystemColor(_primarySystem).withOpacity(0.7),
                     ),
                   ),
                 ],
@@ -2331,11 +2390,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Color _getBandColor(String band) {
-    switch (band) {
+    switch (band.toUpperCase()) {
       case 'L5': return Colors.green;
       case 'L2': return Colors.blue;
       case 'L1': return Colors.orange;
       case 'S': return Colors.purple;
+      case 'G1':
+      case 'G2':
+      case 'G3': return Colors.red; // GLONASS bands
+      case 'E1':
+      case 'E5':
+      case 'E5A': return Colors.purple; // Galileo bands
+      case 'B1':
+      case 'B2':
+      case 'B2A': return Colors.orange; // BeiDou bands
       default: return Colors.grey;
     }
   }
@@ -2363,8 +2431,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icons.explore,
                 title: "LATITUDE",
                 value: pos.latitude.toStringAsFixed(6),
-                color: _isUsingNavic ? Colors.green.shade50 : Colors.blue.shade50,
-                iconColor: _isUsingNavic ? Colors.green.shade700 : Colors.blue.shade700,
+                color: _isUsingNavic ? Colors.green.shade50 : _getSystemColor(_primarySystem).withOpacity(0.1),
+                iconColor: _isUsingNavic ? Colors.green.shade700 : _getSystemColor(_primarySystem),
               ),
             ),
             const SizedBox(width: 12),
@@ -2373,8 +2441,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icons.explore_outlined,
                 title: "LONGITUDE",
                 value: pos.longitude.toStringAsFixed(6),
-                color: _isUsingNavic ? Colors.green.shade50 : Colors.green.shade50,
-                iconColor: _isUsingNavic ? Colors.green.shade700 : Colors.green.shade700,
+                color: _isUsingNavic ? Colors.green.shade50 : _getSystemColor(_primarySystem).withOpacity(0.1),
+                iconColor: _isUsingNavic ? Colors.green.shade700 : _getSystemColor(_primarySystem),
               ),
             ),
           ],
@@ -2517,7 +2585,6 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 12),
               _buildSatelliteStat("NavIC", "$_navicSatelliteCount", Colors.green),
               const SizedBox(width: 12),
-             // _buildSatelliteStat("In Fix", "$_navicUsedInFix", Colors.orange),
             ],
           ),
           const SizedBox(height: 8),
@@ -2526,25 +2593,25 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: _isUsingNavic ? Colors.green.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+              color: _isUsingNavic ? Colors.green.withOpacity(0.1) : _getSystemColor(_primarySystem).withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: _isUsingNavic ? Colors.green.withOpacity(0.3) : Colors.blue.withOpacity(0.3),
+                color: _isUsingNavic ? Colors.green.withOpacity(0.3) : _getSystemColor(_primarySystem).withOpacity(0.3),
               ),
             ),
             child: Row(
               children: [
                 Icon(
-                  _isUsingNavic ? Icons.satellite_alt : Icons.gps_fixed,
+                  _isUsingNavic ? Icons.satellite_alt : _getSystemIcon(_primarySystem),
                   size: 16,
-                  color: _isUsingNavic ? Colors.green : Colors.blue,
+                  color: _isUsingNavic ? Colors.green : _getSystemColor(_primarySystem),
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  _isUsingNavic ? "Using NavIC Positioning" : "Using GPS Positioning",
+                  _isUsingNavic ? "Using NavIC Positioning" : "Using $_primarySystem Positioning",
                   style: TextStyle(
                     fontSize: 12,
-                    color: _isUsingNavic ? Colors.green : Colors.blue,
+                    color: _isUsingNavic ? Colors.green : _getSystemColor(_primarySystem),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -2680,7 +2747,7 @@ class _HomeScreenState extends State<HomeScreen> {
       bannerColor = Colors.blue.shade50;
       bannerIconColor = Colors.blue;
       bannerIcon = Icons.speed;
-      bannerStatus = "L5 GPS Active";
+      bannerStatus = "L5 $_primarySystem Active";
     } else if (_hasL5Band) {
       bannerColor = Colors.blue.shade50;
       bannerIconColor = Colors.blue;
@@ -2695,7 +2762,7 @@ class _HomeScreenState extends State<HomeScreen> {
       bannerColor = Colors.orange.shade50;
       bannerIconColor = Colors.orange;
       bannerIcon = Icons.warning;
-      bannerStatus = "GPS Only";
+      bannerStatus = "$_primarySystem Only";
     }
 
     return Container(

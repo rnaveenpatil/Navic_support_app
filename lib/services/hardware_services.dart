@@ -812,22 +812,39 @@ class NavicHardwareService {
     return result;
   }
 
-  /// Get frequency for band name
+  /// Get frequency for band name - FIXED WITH ALL GNSS BANDS
   static double _getFrequencyForBand(String band) {
-    switch (band) {
+    switch (band.toUpperCase()) {
+      // GPS Bands
       case 'L1': return 1575.42e6;
       case 'L2': return 1227.60e6;
       case 'L5': return 1176.45e6;
+      
+      // NavIC Bands
       case 'S': return 2492.028e6;
-      case 'E1': return 1575.42e6;
-      case 'E5': return 1207.14e6;
-      case 'E5a': return 1176.45e6;
-      case 'B1': return 1561.098e6;
-      case 'B2': return 1207.14e6;
-      case 'B2a': return 1176.45e6;
+      
+      // GLONASS Bands
       case 'G1': return 1602.00e6;
       case 'G2': return 1246.00e6;
       case 'G3': return 1202.025e6;
+      
+      // Galileo Bands
+      case 'E1': return 1575.42e6;
+      case 'E5': return 1207.14e6;
+      case 'E5A': return 1176.45e6;
+      
+      // BeiDou Bands
+      case 'B1': return 1561.098e6;
+      case 'B2': return 1207.14e6;
+      case 'B2A': return 1176.45e6;
+      
+      // QZSS Bands
+      case 'L1C': return 1575.42e6;
+      case 'L2C': return 1227.60e6;
+      
+      // SBAS Bands (same as GPS L1)
+      case 'L1CA': return 1575.42e6;
+      
       default: return 0.0;
     }
   }
