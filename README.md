@@ -131,17 +131,7 @@ For **each satellite in range**:
 
 ---
 
-## 📸 Screenshots
 
-> Real application screenshots captured during live GNSS operation
-
-### 🛰️ GNSS & NavIC Detection Dashboard
-
-![GPS Only – No NavIC Hardware](screenshots/navic_gps_only_status.jpg)
-
-* Shows **hardware compatibility status**
-* Indicates **NavIC availability** and fallback to GPS
-* Displays **active frequency bands**
 
 ---
 
